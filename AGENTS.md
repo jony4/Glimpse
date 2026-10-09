@@ -1,6 +1,6 @@
 # Glimpse development
 
-- Product scope: a read-only macOS viewer for Markdown, source code, and Git diffs.
+- Product scope: a macOS viewer for Markdown, source code, and Git diffs, with explicit Git staging and commit controls. File content remains read-only.
 - Keep crate dependencies one-way: glimpse-app -> glimpse-services -> glimpse-core;
   glimpse-app may also depend on glimpse-core directly.
 - glimpse-core must not depend on GPUI or perform I/O. Services do not import UI.

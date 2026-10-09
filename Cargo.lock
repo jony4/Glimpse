@@ -2149,6 +2149,9 @@ dependencies = [
  "anyhow",
  "glimpse-core",
  "ignore",
+ "image",
+ "notify",
+ "resvg 0.45.1",
  "tempfile",
 ]
 

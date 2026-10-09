@@ -9,7 +9,8 @@ use crate::git;
 pub struct FolderSnapshot {
     pub root: PathBuf,
     pub entries: Vec<DirectoryEntry>,
-    pub repository: Option<Repository>,
+    pub repositories: Vec<Repository>,
+    pub watch: Option<crate::watch::WorkspaceWatch>,
     pub git_warning: Option<String>,
 }
 
@@ -19,14 +20,16 @@ pub fn open_folder(path: &Path) -> Result<FolderSnapshot> {
         .with_context(|| format!("Cannot open {}", path.display()))?;
     let entries = list_directory(&root)?;
     // A missing/broken Git installation must not prevent ordinary folder browsing.
-    let (repository, git_warning) = match git::inspect(&root) {
+    let (repository, git_warning) = match repositories(&root) {
         Ok(repository) => (repository, None),
-        Err(error) => (None, Some(format!("Git: {error:#}"))),
+        Err(error) => (Vec::new(), Some(format!("Git: {error:#}"))),
     };
+    let watch = crate::watch::WorkspaceWatch::new(&root).ok();
     Ok(FolderSnapshot {
         root,
         entries,
-        repository,
+        repositories: repository,
+        watch,
         git_warning,
     })
 }
@@ -62,6 +65,65 @@ pub fn list_directory(path: &Path) -> Result<Vec<DirectoryEntry>> {
             .then_with(|| a.path.file_name().cmp(&b.path.file_name()))
     });
     Ok(entries)
+}
+
+/// Bounded discovery of repositories within a workspace, including linked worktrees.
+pub fn repositories(root: &Path) -> Result<Vec<Repository>> {
+    let mut roots = std::collections::BTreeSet::new();
+    if let Some(repo) = git::inspect(root)? {
+        roots.insert(repo.root);
+    }
+    for entry in WalkBuilder::new(root)
+        .hidden(false)
+        .follow_links(false)
+        .max_depth(Some(6))
+        .filter_entry(|e| {
+            !matches!(
+                e.file_name().to_str(),
+                Some(".git" | "node_modules" | "target" | "dist")
+            )
+        })
+        .build()
+        .take(50_000)
+    {
+        let entry = entry?;
+        if entry.file_type().is_some_and(|kind| kind.is_dir()) && entry.path().join(".git").exists()
+        {
+            roots.insert(entry.path().to_path_buf());
+        }
+        if roots.len() >= 64 {
+            break;
+        }
+    }
+    roots
+        .into_iter()
+        .filter_map(|root| git::inspect(&root).transpose())
+        .collect()
+}
+
+pub fn search_files(root: &Path, query: &str) -> Vec<PathBuf> {
+    let query = query.to_lowercase();
+    if query.trim().is_empty() {
+        return Vec::new();
+    }
+    WalkBuilder::new(root)
+        .hidden(false)
+        .follow_links(false)
+        .filter_entry(|e| e.file_name() != ".git")
+        .build()
+        .take(100_000)
+        .filter_map(Result::ok)
+        .filter(|e| e.file_type().is_some_and(|t| t.is_file()))
+        .map(|e| e.into_path())
+        .filter(|p| {
+            p.strip_prefix(root)
+                .unwrap_or(p)
+                .to_string_lossy()
+                .to_lowercase()
+                .contains(&query)
+        })
+        .take(60)
+        .collect()
 }
 
 #[cfg(test)]

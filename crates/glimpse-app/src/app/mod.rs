@@ -46,7 +46,7 @@ pub fn run() -> Result<()> {
                         MenuItem::action("Open File…", OpenFile),
                         MenuItem::action("Open Folder…", OpenFolder),
                         MenuItem::action("Refresh", Refresh),
-                        MenuItem::action("Close Window", CloseWindow),
+                        MenuItem::action("Close Tab / Window", CloseWindow),
                     ],
                 },
             ]);
@@ -64,11 +64,7 @@ pub fn run() -> Result<()> {
                     cx,
                 ))),
                 window_min_size: Some(size(px(800.), px(480.))),
-                titlebar: Some(TitlebarOptions {
-                    title: Some("Glimpse".into()),
-                    ..Default::default()
-                }),
-                ..Default::default()
+                ..gpui_kit::component::TitleBar::window_options()
             };
             match gpui_kit::open_window(options, cx, |window, cx| {
                 cx.new(|cx| Workspace::new(path.map(Into::into), window, cx))

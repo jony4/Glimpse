@@ -8,7 +8,7 @@ use glimpse_services::workspace::list_directory;
 use gpui_kit::{
     component::{
         ActiveTheme,
-        button::{Button, ButtonVariants},
+        button::{Button, ButtonCustomVariant, ButtonVariants},
     },
     prelude::FluentBuilder,
     *,
@@ -67,6 +67,32 @@ impl Explorer {
             selected: None,
             focus: cx.focus_handle(),
             scroll: UniformListScrollHandle::new(),
+        }
+    }
+
+    pub fn refresh(&mut self, cx: &mut Context<Self>) {
+        let mut paths = self.expanded.iter().cloned().collect::<Vec<_>>();
+        paths.push(self.root.clone());
+        for path in paths {
+            let read_path = path.clone();
+            let read = cx
+                .background_executor()
+                .spawn(async move { list_directory(&read_path) });
+            let key = path.clone();
+            let task = cx.spawn(async move |view, cx| {
+                let result = read.await;
+                let _ = view.update(cx, |view, cx| {
+                    if let Ok(entries) = result {
+                        view.directories.insert(path.clone(), entries);
+                    } else {
+                        view.directories.remove(&path);
+                    }
+                    view.tasks.remove(&path);
+                    view.rebuild();
+                    cx.notify();
+                });
+            });
+            self.tasks.insert(key, task);
         }
     }
 
@@ -232,14 +258,22 @@ impl Render for Explorer {
                                     })
                                     .child(
                                         Button::new(("entry", index))
-                                            .ghost()
+                                            .custom(ButtonCustomVariant::new(cx))
                                             .accessibility_label(format!("{marker}  {name}"))
                                             .child(
-                                                div()
-                                                    .w_full()
-                                                    .text_left()
-                                                    .truncate()
-                                                    .child(format!("{marker}  {name}")),
+                                                div().w_full().text_left().truncate().child(
+                                                    gpui_kit::component::h_flex()
+                                                        .gap_2()
+                                                        .child(if row.entry.is_dir {
+                                                            div().child(marker).into_any_element()
+                                                        } else {
+                                                            super::file_icons::file_icon(
+                                                                &row.entry.path,
+                                                            )
+                                                            .into_any_element()
+                                                        })
+                                                        .child(name.into_owned()),
+                                                ),
                                             )
                                             .w_full()
                                             .h(px(32.))

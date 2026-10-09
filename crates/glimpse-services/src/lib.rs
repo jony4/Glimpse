@@ -3,3 +3,7 @@
 pub mod files;
 pub mod git;
 pub mod workspace;
+
+pub mod watch;
+
+pub mod media;

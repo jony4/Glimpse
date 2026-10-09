@@ -10,6 +10,9 @@ repository.workspace = true
 glimpse-core.workspace = true
 anyhow.workspace = true
 ignore = "0.4"
+notify = "8.2"
+image = { version = "0.25.10", default-features = false, features = ["png", "jpeg", "gif", "webp", "bmp", "tiff", "ico"] }
+resvg = { version = "0.45.1", default-features = false }
 
 [dev-dependencies]
 tempfile = "3"

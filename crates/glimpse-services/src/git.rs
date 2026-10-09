@@ -31,15 +31,18 @@ fn run(root: &Path, args: &[&OsStr]) -> Result<GitOutput> {
         .env("GIT_OPTIONAL_LOCKS", "0")
         .env("GIT_LITERAL_PATHSPECS", "1")
         .env("LC_ALL", "C")
+        .env("GIT_TERMINAL_PROMPT", "0")
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .spawn()
         .context("Cannot run git; install Git or Apple Command Line Tools")?;
-    let stderr = child.stderr.take().context("Missing Git stderr")?;
+    let mut stderr = child.stderr.take().context("Missing Git stderr")?;
     let errors = std::thread::spawn(move || {
         let mut bytes = Vec::new();
-        let _ = stderr.take(64 * 1024).read_to_end(&mut bytes);
+        let _ = stderr.by_ref().take(64 * 1024).read_to_end(&mut bytes);
+        // Keep draining so a verbose hook cannot block the child on a full pipe.
+        let _ = std::io::copy(&mut stderr, &mut std::io::sink());
         String::from_utf8_lossy(&bytes).into_owned()
     });
     let mut bytes = Vec::new();
@@ -205,6 +208,45 @@ pub fn read_diff(root: &Path, change: &GitChange) -> Result<DiffDocument> {
         change: change.clone(),
         patch: String::from_utf8_lossy(&output.bytes).into_owned(),
     })
+}
+
+/// Clone into a new child of the selected parent, without overwriting an existing folder.
+pub fn clone_repository(url: &str, parent: &std::path::Path) -> anyhow::Result<std::path::PathBuf> {
+    anyhow::ensure!(
+        url.starts_with("https://") || url.starts_with("ssh://") || url.starts_with("git@"),
+        "Use an HTTPS or SSH repository URL"
+    );
+    let name = url
+        .trim_end_matches('/')
+        .rsplit('/')
+        .next()
+        .unwrap_or_default()
+        .trim_end_matches(".git");
+    anyhow::ensure!(
+        !name.is_empty() && name != "." && name != ".." && !name.contains([':', '\\', '?', '#']),
+        "Invalid repository name"
+    );
+    let destination = parent.join(name);
+    anyhow::ensure!(
+        !destination.exists(),
+        "Destination already exists: {}",
+        destination.display()
+    );
+    let output = run(
+        parent,
+        &[
+            OsStr::new("clone"),
+            OsStr::new("--"),
+            OsStr::new(url),
+            destination.as_os_str(),
+        ],
+    )?;
+    ensure!(
+        output.code == Some(0),
+        "Clone failed: {}",
+        output.stderr.trim()
+    );
+    Ok(destination)
 }
 
 #[cfg(test)]
@@ -384,6 +426,107 @@ mod tests {
         assert!(changes[0].original_path.is_some());
         assert_eq!(changes[1].scope, DiffScope::Worktree);
         assert!(changes[1].original_path.is_none());
+        Ok(())
+    }
+}
+
+/// Explicit UI actions only; viewing and refresh never call this function.
+pub fn stage(root: &Path, change: &GitChange, staged: bool) -> Result<()> {
+    let mut args: Vec<OsString> = if staged {
+        vec!["add".into(), "--".into()]
+    } else {
+        vec!["restore".into(), "--staged".into(), "--".into()]
+    };
+    // `restore --staged` requires HEAD. An unborn index is removed with rm --cached.
+    if !staged && checked(root, &["rev-parse", "--verify", "HEAD"]).is_err() {
+        args = vec!["rm".into(), "--cached".into(), "-f".into(), "--".into()];
+    }
+    for path in std::iter::once(&change.path).chain(change.original_path.iter()) {
+        ensure!(
+            !path.is_absolute() && !path.components().any(|c| matches!(c, Component::ParentDir)),
+            "Invalid repository-relative path"
+        );
+        args.push(path.as_os_str().to_owned());
+    }
+    let output = run(
+        root,
+        &args.iter().map(OsString::as_os_str).collect::<Vec<_>>(),
+    )?;
+    ensure!(output.code == Some(0), "{}", output.stderr.trim());
+    Ok(())
+}
+
+pub fn commit(root: &Path, message: &str) -> Result<()> {
+    ensure!(!message.trim().is_empty(), "Enter a commit message");
+    let repo = inspect(root)?.context("Repository no longer exists")?;
+    ensure!(
+        !repo.changes.iter().any(|c| c.scope == DiffScope::Conflict),
+        "Resolve merge conflicts before committing"
+    );
+    ensure!(
+        repo.changes.iter().any(|c| c.scope == DiffScope::Index),
+        "Stage changes before committing"
+    );
+    let output = run(
+        root,
+        &[OsStr::new("commit"), OsStr::new("-m"), OsStr::new(message)],
+    )?;
+    ensure!(output.code == Some(0), "{}", output.stderr.trim());
+    Ok(())
+}
+
+pub(crate) fn metadata_directories(root: &Path) -> Result<Vec<PathBuf>> {
+    ["--absolute-git-dir", "--git-common-dir"]
+        .into_iter()
+        .map(|option| {
+            let bytes = checked(root, &["rev-parse", "--path-format=absolute", option])?;
+            Ok(path_from_bytes(bytes.strip_suffix(b"\n").unwrap_or(&bytes)))
+        })
+        .collect()
+}
+
+#[cfg(test)]
+mod write_tests {
+    use super::*;
+    use std::fs;
+    #[test]
+    fn commits_only_staged_changes_and_unstages_without_touching_worktree() -> Result<()> {
+        let temp = tempfile::tempdir()?;
+        let root = temp.path();
+        checked(root, &["init", "-b", "main"])?;
+        checked(root, &["config", "user.name", "Test"])?;
+        checked(root, &["config", "user.email", "test@example.invalid"])?;
+        fs::write(root.join("[a].txt"), "base\n")?;
+        fs::write(root.join("other.txt"), "other\n")?;
+        let change = inspect(root)?
+            .unwrap()
+            .changes
+            .into_iter()
+            .find(|c| c.path == Path::new("[a].txt"))
+            .unwrap();
+        stage(root, &change, true)?;
+        let staged = inspect(root)?
+            .unwrap()
+            .changes
+            .into_iter()
+            .find(|c| c.scope == DiffScope::Index)
+            .unwrap();
+        fs::write(root.join("[a].txt"), "working\n")?;
+        stage(root, &staged, false)?;
+        assert_eq!(fs::read_to_string(root.join("[a].txt"))?, "working\n");
+        assert!(commit(root, "not staged").is_err());
+        stage(root, &change, true)?;
+        assert!(commit(root, "  ").is_err());
+        commit(root, "fixture commit")?;
+        let files = checked(root, &["ls-tree", "--name-only", "HEAD"])?;
+        assert_eq!(String::from_utf8(files)?, "[a].txt\n");
+        assert!(
+            inspect(root)?
+                .unwrap()
+                .changes
+                .iter()
+                .any(|c| c.path == Path::new("other.txt"))
+        );
         Ok(())
     }
 }

@@ -7,7 +7,7 @@ pub struct DirectoryEntry {
     pub is_symlink: bool,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum DiffScope {
     Worktree,
     Index,

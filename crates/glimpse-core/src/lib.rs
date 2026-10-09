@@ -9,3 +9,5 @@ pub use workspace::{DiffDocument, DiffScope, DirectoryEntry, GitChange, Reposito
 
 mod diff;
 pub use diff::{DiffSpan, changed_lines};
+
+pub mod split_diff;
