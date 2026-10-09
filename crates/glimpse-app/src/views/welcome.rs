@@ -9,6 +9,7 @@ pub fn welcome(cx: &App) -> impl IntoElement {
         .items_center()
         .justify_center()
         .gap_3()
+        .child(img("branding/glimpse.png").w(px(88.)).h(px(88.)).mb_3())
         .child(
             div()
                 .text_3xl()
@@ -24,12 +25,12 @@ pub fn welcome(cx: &App) -> impl IntoElement {
             div()
                 .mt_4()
                 .text_sm()
-                .child("Open a Markdown or text file to begin."),
+                .child("Open a folder to explore code, changes, and Markdown."),
         )
         .child(
             div()
                 .text_sm()
                 .text_color(cx.theme().muted_foreground)
-                .child("⌘O  Open file"),
+                .child("⌘⇧O  Open folder     ·     ⌘O  Open file"),
         )
 }

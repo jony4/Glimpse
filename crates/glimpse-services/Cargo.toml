@@ -9,6 +9,7 @@ repository.workspace = true
 [dependencies]
 glimpse-core.workspace = true
 anyhow.workspace = true
+ignore = "0.4"
 
 [dev-dependencies]
 tempfile = "3"

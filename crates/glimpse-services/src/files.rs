@@ -7,6 +7,7 @@ use glimpse_core::{Document, DocumentKind};
 pub const MAX_DOCUMENT_BYTES: u64 = 2 * 1024 * 1024;
 
 pub fn read_document(path: &Path) -> Result<Document> {
+    ensure!(path.is_file(), "Not a regular file: {}", path.display());
     let file = File::open(path).with_context(|| format!("Cannot open {}", path.display()))?;
     ensure!(
         file.metadata()?.is_file(),
@@ -29,7 +30,7 @@ pub fn read_document(path: &Path) -> Result<Document> {
     let text = String::from_utf8(bytes)
         .with_context(|| format!("File is not UTF-8: {}", path.display()))?;
     Ok(Document {
-        path: path.to_path_buf(),
+        path: std::path::absolute(path)?,
         kind: DocumentKind::from_path(path),
         text,
     })

@@ -1,41 +1,51 @@
 # 架构约定
 
-## 目标与边界
-
-Glimpse 是只读桌面应用，核心场景为 Markdown、代码和 Git diff。当前阶段建立可构建、可启动的基础及文件阅读闭环，后续以小步功能迭代推进。
-
-采用三个 crate，避免 UI 类型进入领域模型，也避免为了尚不存在的能力建立空模块或通用框架。
+Glimpse 是只读 macOS 查看器，负责 Markdown、代码和 Git diff 阅读。
 
 ```text
 glimpse-app ──────> glimpse-services ──────> glimpse-core
-     └─────────────────────────────────> glimpse-core
+     └──────────────────────────────────> glimpse-core
 ```
 
-- `glimpse-core`：可独立测试的领域值与纯逻辑。只在这里存在真正共享的概念时扩充模型，不引入 GPUI、窗口、文件读取或进程启动。
-- `glimpse-services`：具体 I/O 实现。返回领域值和可追踪的错误；不依赖应用层，不决定界面布局。现阶段直接函数足够，存在替换实现的需求时再引入 trait。
-- `glimpse-app`：组合服务与 GPUI；负责窗口、动作、焦点、状态、任务生命周期和呈现。`main.rs` 只调用启动入口。
+## 职责
 
-## 状态与任务
+- `glimpse-core`：文档、路径对应的语言、目录项、仓库和变更范围模型，以及 unified/combined patch 中变更行的 UTF-8 字节范围。无 GPUI 或 I/O 依赖。
+- `glimpse-services`：`files` 读取有限大小的 UTF-8 文本；`workspace` 按层读取目录；`git` 识别仓库、读取状态和 patch。阻塞 API 只从后台任务调用。
+- `glimpse-app`：组合服务和 GPUI；`app` 管理启动、菜单、动作和内嵌资源；`views/workspace` 管理窗口状态、任务编排和整体布局；`Explorer`、`Changes`、`Reader` 分别管理三种呈现。
 
-`Workspace` 是窗口级状态所有者，持有当前 `Reader`、加载状态、错误和读取任务。`Reader` 持有长期存在的 `EditorState`，不在 `render` 内重建编辑器或执行文件 I/O。Markdown 使用 GPUI Kit 的 TextView。
+保留具体函数和明确的模块边界，在出现多个实现需求时再引入服务 trait。
 
-文件读取在 GPUI 的 background executor 上执行，完成后回到窗口上下文安装数据。窗口实体使用弱引用，窗口关闭后不会被任务继续持有；替换任务使旧结果失效。读取失败保留旧文档。当前只读路径不提供任何磁盘写入 API。
+## 目录树
 
-初始版本通过 2 MiB 实际读取上限限制内存增长，并明确拒绝 NUL 字节和非 UTF-8 文件。这个限制是早期保护，不是最终的大文件方案；目录扫描、超长行、大文件和 Markdown 解析耗时应另行测量。渲染线程上的组件初始化仍可能包含解析工作。
+只读取当前目录的直接子项，展开子目录时启动后台任务。缓存已经访问的目录；折叠不丢弃缓存。`ignore` 处理 ignore 规则，显示未被忽略的点文件，隐藏 `.git`，不递归跟随软链接。可见行由展开状态生成，使用 GPUI uniform_list 虚拟渲染。每个目录持有独立任务句柄，失败显示错误且可重试。
 
-## 后续功能落点
+点击文件或键盘 Enter 发出 `ExplorerEvent::OpenFile`，窗口层读取文件。状态模型不包含 UI 颜色或 GPUI 类型。
 
-- 文件树：`glimpse-services/src/workspace/` 负责目录扫描；`glimpse-app/src/views/explorer/` 负责虚拟列表、展开状态和选择。按需加载子目录。
-- Git diff：`glimpse-core/src/diff/` 定义差异模型；`glimpse-services/src/git/` 封装只读 Git 调用；`glimpse-app/src/views/diff/` 实现 unified / split 呈现。
-- 文件监听：服务层产出文件变化事件；应用层去抖并更新状态，保留阅读位置。
-- 配置与会话：有实际持久化需求时新增具体服务，不把磁盘操作放到视图中。
+## Git 比较语义
 
-以上路径是演进约定，目前不创建占位模块。
+`git rev-parse --show-toplevel` 从任意子目录发现仓库，支持 `.git` 为文件的 linked worktree。非 Git 目录照常浏览；Git 不可用或读取失败时显示提示。
 
-Git 层需明确区分工作区、暂存区和提交比较，使用参数化进程调用与路径分隔符，不拼接 shell 命令。差异数据与颜色、行高、滚动位置分别建模。
+解析 `git status --porcelain=v1 -z`，保留空格、换行与原始路径字节。暂存和工作区修改是独立记录；冲突单独标识，重命名保留源路径。Changes 显示整个仓库的状态。
 
-## 依赖和质量
+- Staged：`git diff --cached`，比较 HEAD 和 index；没有首个提交时也可读取。
+- Unstaged：`git diff`，比较 index 和工作区。
+- Untracked：`git diff --no-index /dev/null <file>`，接受退出码 1 表示差异。
+- Conflict：`git diff --cc`，显示 Git 的 combined patch，不进行合并或解决冲突。
 
-GPUI Kit 使用精确版本并提交 Cargo.lock。升级时单独验证 API、启动、选择复制、中文、快捷键和窗口生命周期。暂不打开全部 Tree-sitter 语言、LSP 或 JS 扩展功能，按实际需求增加。
+通过 `Command` 参数调用，不使用 shell 字符串。强制字面 pathspec，禁用 pager、external diff、textconv、fsmonitor 和可选 index 锁；清理可能覆盖工作目录的 Git 环境变量。stdout 有 8 MiB 上限，stderr 独立读取；超限终止子进程并返回明确错误。UI 不执行 stage、commit、checkout 或其他仓库写入。
 
-格式、Clippy、测试和构建由 macOS CI 执行。服务层测试覆盖文件保真与输入限制。图形界面仍需本机检查：欢迎页、⌘O 和取消、Markdown 预览/源码切换、文本选择复制、不可编辑、加载错误、窗口缩放和退出。CI 成功不等于这些交互已经验证。
+当前 diff 以只读文本提供原始 patch、红绿变更行、选择复制与搜索。代码差异模型和呈现分离，后续可在其上增加双栏对齐与行内差异。
+
+## 生命周期
+
+Workspace 持有当前 Reader、Explorer / Changes 实体、事件订阅、文件选择器任务和当前加载任务。新的读取替换旧任务，旧结果不能覆盖新选择；后台结果通过弱实体引用返回窗口。正在运行的同步 I/O 可能继续完成，但其结果不再被安装。
+
+Reader 持有长期存在的 EditorState，render 不新建编辑器、不做 I/O。文件和 diff 均在 state 与 renderer 两层启用只读。代码语言按扩展名映射，按需开启 Tree-sitter grammar，不接 LSP。Markdown 用 Kit 的 Base TextView（Component 初始化安装主题和代码块高亮），并把相对图片 URL 解析为本地路径。
+
+Refresh 在后台重新读取目录、仓库状态及当前内容；当前版本会重建展开状态和阅读位置。自动监听、会话恢复、多标签页和 Markdown 本地文档跳转留待后续迭代。
+
+## 品牌与构建
+
+Logo 的 SVG 源文件在 `assets/branding`，PNG 内嵌于二进制用于欢迎页，ICNS 用于 app bundle。`scripts/render-icons.mjs` 是可选的图标生成工具；正常构建只使用版本控制内的资源，不需要 Node.js。
+
+GPUI Kit 固定版本并提交 Cargo.lock。升级需验证启动、文本选择、中文、快捷键和窗口生命周期。macOS CI 执行格式、Clippy、测试、构建；实际界面验证记录见 verification.md。

@@ -13,7 +13,13 @@ repository = "https://github.com/jony4/Glimpse"
 [workspace.dependencies]
 glimpse-core = { path = "crates/glimpse-core" }
 glimpse-services = { path = "crates/glimpse-services" }
-gpui-kit = "=0.7.1"
+gpui-kit = { version = "=0.7.1", features = [
+    "tree-sitter-rust", "tree-sitter-javascript", "tree-sitter-typescript",
+    "tree-sitter-tsx", "tree-sitter-toml", "tree-sitter-python", "tree-sitter-go",
+    "tree-sitter-c", "tree-sitter-cpp", "tree-sitter-css", "tree-sitter-html",
+    "tree-sitter-yaml", "tree-sitter-bash", "tree-sitter-swift",
+    "tree-sitter-markdown", "tree-sitter-markdown-inline", "tree-sitter-diff",
+] }
 anyhow = "1"
 
 [workspace.lints.rust]
