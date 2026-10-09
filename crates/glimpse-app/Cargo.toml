@@ -1,0 +1,20 @@
+[package]
+name = "glimpse-app"
+version.workspace = true
+edition.workspace = true
+publish.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[[bin]]
+name = "glimpse"
+path = "src/main.rs"
+
+[dependencies]
+glimpse-core.workspace = true
+glimpse-services.workspace = true
+gpui-kit.workspace = true
+anyhow.workspace = true
+
+[lints]
+workspace = true

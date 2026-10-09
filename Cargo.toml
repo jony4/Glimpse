@@ -1,0 +1,32 @@
+[workspace]
+members = ["crates/glimpse-core", "crates/glimpse-services", "crates/glimpse-app"]
+default-members = ["crates/glimpse-app"]
+resolver = "3"
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+publish = false
+license = "MIT"
+repository = "https://github.com/jony4/Glimpse"
+
+[workspace.dependencies]
+glimpse-core = { path = "crates/glimpse-core" }
+glimpse-services = { path = "crates/glimpse-services" }
+gpui-kit = "=0.7.1"
+anyhow = "1"
+
+[workspace.lints.rust]
+unsafe_code = "forbid"
+
+[workspace.lints.clippy]
+dbg_macro = "deny"
+todo = "deny"
+
+[profile.dev]
+debug = "limited"
+
+[profile.release]
+lto = "thin"
+codegen-units = 1
+strip = "debuginfo"

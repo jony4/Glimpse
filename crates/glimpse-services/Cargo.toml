@@ -1,0 +1,17 @@
+[package]
+name = "glimpse-services"
+version.workspace = true
+edition.workspace = true
+publish.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+glimpse-core.workspace = true
+anyhow.workspace = true
+
+[dev-dependencies]
+tempfile = "3"
+
+[lints]
+workspace = true
