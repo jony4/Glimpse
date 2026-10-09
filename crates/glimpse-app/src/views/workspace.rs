@@ -1,11 +1,11 @@
 use std::path::PathBuf;
 
+use glimpse_services::files::read_document;
 use gpui_kit::{
     component::{ActiveTheme, Disableable, button::Button, h_flex, v_flex},
     prelude::FluentBuilder,
     *,
 };
-use glimpse_services::files::read_document;
 
 use super::{reader::Reader, welcome::welcome};
 use crate::app::actions::OpenFile;

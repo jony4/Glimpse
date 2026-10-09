@@ -1,3 +1,4 @@
+use glimpse_core::{Document, DocumentKind};
 use gpui_kit::{
     component::{
         input::{Editor, EditorState},
@@ -5,7 +6,6 @@ use gpui_kit::{
     },
     *,
 };
-use glimpse_core::{Document, DocumentKind};
 
 /// Owns persistent text state; rendering never re-creates the editor entity.
 pub struct Reader {
