@@ -1,6 +1,5 @@
 use gpui_kit::{
     component::{
-        ActiveTheme,
         button::{Button, ButtonVariants},
         v_flex,
     },
@@ -38,11 +37,10 @@ impl ImageReader {
 }
 
 pub(super) struct UnavailableReader {
-    pub reason: String,
     issue_url: String,
 }
 impl UnavailableReader {
-    pub fn new(path: &Path, reason: String) -> Self {
+    pub fn new(path: &Path, _reason: String) -> Self {
         let extension = path
             .extension()
             .and_then(|s| s.to_str())
@@ -53,11 +51,10 @@ impl UnavailableReader {
         url.query_pairs_mut().append_pair("title", &format!("Unsupported file format: {extension}"))
             .append_pair("body", &format!("Format: {extension}\nGlim: {}\nPlatform: {} / {}\n\nWhat happened:\nCould not display this file.\n\nExpected behavior:\n\nAdditional details (optional):\n", env!("CARGO_PKG_VERSION"), std::env::consts::OS, std::env::consts::ARCH));
         Self {
-            reason,
             issue_url: url.into(),
         }
     }
-    pub fn render(&self, cx: &mut App) -> AnyElement {
+    pub fn render(&self, _cx: &mut App) -> AnyElement {
         let url = self.issue_url.clone();
         v_flex()
             .size_full()
@@ -66,12 +63,6 @@ impl UnavailableReader {
             .gap_3()
             .p_8()
             .child(div().text_xl().child("暂时打不开这个文件"))
-            .child(
-                div()
-                    .text_sm()
-                    .text_color(cx.theme().muted_foreground)
-                    .child(self.reason.clone()),
-            )
             .child(
                 Button::new("unsupported-issue")
                     .ghost()

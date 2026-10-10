@@ -216,7 +216,8 @@ impl Workspace {
                         })
                         .cursor_pointer()
                         .on_click(cx.listener(move |view, _, window, cx| {
-                            view.activate_tab(index, window, cx)
+                            view.activate_tab(index, window, cx);
+                            view.tabs[index].reveal_native(cx);
                         }))
                         .child(
                             h_flex()

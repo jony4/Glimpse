@@ -269,6 +269,14 @@ impl Reader {
             renderer,
         }
     }
+    pub fn reveal_native(&self, cx: &mut App) -> bool {
+        if let Renderer::Native(view) = &self.renderer {
+            view.update(cx, |v, cx| v.open(cx));
+            return true;
+        }
+        false
+    }
+
     pub fn is_unavailable(&self) -> bool {
         matches!(self.renderer, Renderer::Unavailable(_))
     }

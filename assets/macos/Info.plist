@@ -8,9 +8,85 @@
     <key>CFBundleExecutable</key><string>glim</string>
     <key>CFBundleIconFile</key><string>Glim</string>
     <key>CFBundlePackageType</key><string>APPL</string>
-    <key>CFBundleShortVersionString</key><string>0.1.4</string>
-    <key>CFBundleVersion</key><string>5</string>
+    <key>CFBundleShortVersionString</key><string>0.1.5</string>
+    <key>CFBundleVersion</key><string>6</string>
     <key>NSHighResolutionCapable</key><true/>
     <key>NSSupportsAutomaticGraphicsSwitching</key><true/>
+    <key>CFBundleDocumentTypes</key>
+    <array><dict>
+        <key>CFBundleTypeName</key><string>Glim Documents</string>
+        <key>CFBundleTypeRole</key><string>Viewer</string>
+        <key>LSHandlerRank</key><string>Alternate</string>
+        <key>CFBundleTypeExtensions</key><array>
+            <string>md</string>
+            <string>markdown</string>
+            <string>txt</string>
+            <string>log</string>
+            <string>json</string>
+            <string>jsonl</string>
+            <string>geojson</string>
+            <string>yaml</string>
+            <string>yml</string>
+            <string>toml</string>
+            <string>html</string>
+            <string>htm</string>
+            <string>xml</string>
+            <string>rs</string>
+            <string>py</string>
+            <string>js</string>
+            <string>jsx</string>
+            <string>ts</string>
+            <string>tsx</string>
+            <string>c</string>
+            <string>h</string>
+            <string>cpp</string>
+            <string>hpp</string>
+            <string>go</string>
+            <string>swift</string>
+            <string>java</string>
+            <string>kt</string>
+            <string>rb</string>
+            <string>php</string>
+            <string>sh</string>
+            <string>sql</string>
+            <string>css</string>
+            <string>pdf</string>
+            <string>png</string>
+            <string>jpg</string>
+            <string>jpeg</string>
+            <string>webp</string>
+            <string>gif</string>
+            <string>svg</string>
+            <string>bmp</string>
+            <string>tiff</string>
+            <string>mp3</string>
+            <string>m4a</string>
+            <string>wav</string>
+            <string>aac</string>
+            <string>flac</string>
+            <string>aiff</string>
+            <string>caf</string>
+            <string>mp4</string>
+            <string>mov</string>
+            <string>m4v</string>
+            <string>doc</string>
+            <string>docx</string>
+            <string>rtf</string>
+            <string>xls</string>
+            <string>xlsx</string>
+            <string>ppt</string>
+            <string>pptx</string>
+            <string>safetensors</string>
+            <string>ttf</string><string>otf</string><string>ttc</string><string>otc</string><string>dfont</string>
+        </array>
+    </dict><dict>
+        <key>CFBundleTypeName</key><string>Apple iWork Documents</string>
+        <key>CFBundleTypeRole</key><string>Viewer</string>
+        <key>LSHandlerRank</key><string>Alternate</string>
+        <key>LSTypeIsPackage</key><true/>
+        <key>CFBundleTypeExtensions</key><array>
+            <string>key</string><string>pages</string><string>numbers</string>
+        </array>
+    </dict></array>
 </dict>
 </plist>

@@ -6,7 +6,10 @@ use anyhow::{Result, bail};
 use gpui_kit::*;
 
 use crate::views::workspace::Workspace;
-use actions::{AddFolder, CloseWindow, NewWindow, OpenFile, OpenFolder, Quit, Refresh, SaveFile};
+use actions::{
+    AddFolder, CloseWindow, DefaultApplications, NewWindow, OpenFile, OpenFolder, Quit, Refresh,
+    SaveFile,
+};
 
 pub struct ReaderPreferences {
     pub word_wrap: bool,
@@ -15,6 +18,41 @@ pub struct ReaderPreferences {
     pub preview_save_task: Option<Task<()>>,
 }
 impl Global for ReaderPreferences {}
+
+#[derive(Default)]
+struct DefaultApplicationsTask(Option<Task<()>>);
+impl Global for DefaultApplicationsTask {}
+
+fn open_default_applications(cx: &mut App) {
+    if cx.global::<DefaultApplicationsTask>().0.is_some() {
+        return;
+    }
+    let work = cx.background_executor().spawn(async {
+        glim_services::preview::open_associations(std::sync::Arc::new(
+            std::sync::atomic::AtomicBool::new(false),
+        ))
+    });
+    let task = cx.spawn(async move |cx| {
+        let result = work.await;
+        cx.update(|cx| {
+            cx.global_mut::<DefaultApplicationsTask>().0 = None;
+            if let Err(error) = result
+                && let Some((_, handle)) = cx.global::<OpenWorkspaces>().0.last().cloned()
+            {
+                let _ = handle.update(cx, |_, window, cx| {
+                    drop(window.prompt(
+                        PromptLevel::Warning,
+                        "Default applications",
+                        Some(&format!("{error:#}")),
+                        &["OK"],
+                        cx,
+                    ));
+                });
+            }
+        });
+    });
+    cx.global_mut::<DefaultApplicationsTask>().0 = Some(task);
+}
 
 pub fn run() -> Result<()> {
     let mut arguments = std::env::args_os().skip(1);
@@ -32,65 +70,138 @@ pub fn run() -> Result<()> {
     let word_wrap = glim_services::preferences::word_wrap();
     let html_preview = glim_services::preferences::preview_mode("html");
     let markdown_preview = glim_services::preferences::preview_mode("markdown");
-    gpui_kit::application()
-        .with_assets(assets::Assets)
-        .run(move |cx| {
-            gpui_kit::init(cx);
-            languages::init();
-            cx.set_global(ReaderPreferences {
-                word_wrap,
-                html_preview,
-                markdown_preview,
-                preview_save_task: None,
-            });
-            cx.set_global(OpenWorkspaces::default());
-            gpui_kit::component::Theme::set_scrollbar_mode(
-                gpui_kit::component::scroll::ScrollbarMode::Hover,
-                cx,
-            );
-            crate::views::explorer::Explorer::init(cx);
-            cx.on_action(|_: &Quit, cx| request_quit(cx));
-            cx.on_action(|_: &NewWindow, cx| open_workspace(None, cx));
-            cx.bind_keys([
-                KeyBinding::new("cmd-q", Quit, None),
-                KeyBinding::new("cmd-shift-n", NewWindow, None),
-                KeyBinding::new("cmd-o", OpenFile, None),
-                KeyBinding::new("cmd-s", SaveFile, None),
-                KeyBinding::new("cmd-shift-o", OpenFolder, None),
-                KeyBinding::new("cmd-r", Refresh, None),
-                KeyBinding::new("cmd-w", CloseWindow, None),
-            ]);
-            cx.set_dock_menu(vec![MenuItem::action("New Window", NewWindow)]);
-            cx.set_menus(vec![
-                Menu {
-                    name: "Glim".into(),
-                    disabled: false,
-                    items: vec![MenuItem::action("Quit Glim", Quit)],
-                },
-                Menu {
-                    name: "File".into(),
-                    disabled: false,
-                    items: vec![
-                        MenuItem::action("New Window", NewWindow),
-                        MenuItem::action("Open File…", OpenFile),
-                        MenuItem::action("Open Folder…", OpenFolder),
-                        MenuItem::action("Add Folder to Workspace…", AddFolder),
-                        MenuItem::action("Save", SaveFile),
-                        MenuItem::action("Refresh", Refresh),
-                        MenuItem::action("Close Tab / Window", CloseWindow),
-                    ],
-                },
-            ]);
-            cx.on_window_closed(|cx, _| {
-                if cx.windows().is_empty() {
-                    cx.quit();
-                }
-            })
-            .detach();
-
-            open_workspace(path.map(Into::into), cx);
+    let application = gpui_kit::application().with_assets(assets::Assets);
+    let context = std::rc::Rc::new(std::cell::RefCell::new(None::<AsyncApp>));
+    let pending = std::rc::Rc::new(std::cell::RefCell::new(Vec::<String>::new()));
+    let open_context = context.clone();
+    let open_pending = pending.clone();
+    application.on_open_urls(move |urls| {
+        if let Some(app) = open_context.borrow().clone() {
+            app.clone()
+                .foreground_executor()
+                .spawn(async move {
+                    app.update(|cx| open_system_files(urls, cx));
+                })
+                .detach();
+        } else {
+            open_pending.borrow_mut().extend(urls);
+        }
+    });
+    application.run(move |cx| {
+        gpui_kit::init(cx);
+        languages::init();
+        cx.set_global(ReaderPreferences {
+            word_wrap,
+            html_preview,
+            markdown_preview,
+            preview_save_task: None,
         });
+        cx.set_global(OpenWorkspaces::default());
+        cx.set_global(DefaultApplicationsTask::default());
+        *context.borrow_mut() = Some(cx.to_async());
+        gpui_kit::component::Theme::set_scrollbar_mode(
+            gpui_kit::component::scroll::ScrollbarMode::Hover,
+            cx,
+        );
+        crate::views::explorer::Explorer::init(cx);
+        cx.on_action(|_: &Quit, cx| request_quit(cx));
+        cx.on_action(|_: &NewWindow, cx| open_workspace(None, cx));
+        cx.on_action(|_: &DefaultApplications, cx| open_default_applications(cx));
+        cx.bind_keys([
+            KeyBinding::new("cmd-q", Quit, None),
+            KeyBinding::new("cmd-shift-n", NewWindow, None),
+            KeyBinding::new("cmd-o", OpenFile, None),
+            KeyBinding::new("cmd-s", SaveFile, None),
+            KeyBinding::new("cmd-shift-o", OpenFolder, None),
+            KeyBinding::new("cmd-r", Refresh, None),
+            KeyBinding::new("cmd-w", CloseWindow, None),
+        ]);
+        cx.set_dock_menu(vec![MenuItem::action("New Window", NewWindow)]);
+        cx.set_menus(vec![
+            Menu {
+                name: "Glim".into(),
+                disabled: false,
+                items: vec![
+                    MenuItem::action("Default File Types…", DefaultApplications),
+                    MenuItem::separator(),
+                    MenuItem::action("Quit Glim", Quit),
+                ],
+            },
+            Menu {
+                name: "File".into(),
+                disabled: false,
+                items: vec![
+                    MenuItem::action("New Window", NewWindow),
+                    MenuItem::action("Open File…", OpenFile),
+                    MenuItem::action("Open Folder…", OpenFolder),
+                    MenuItem::action("Add Folder to Workspace…", AddFolder),
+                    MenuItem::action("Save", SaveFile),
+                    MenuItem::action("Refresh", Refresh),
+                    MenuItem::action("Close Tab / Window", CloseWindow),
+                ],
+            },
+        ]);
+        cx.on_window_closed(|cx, _| {
+            if cx.windows().is_empty() {
+                cx.quit();
+            }
+        })
+        .detach();
+
+        let requested = std::mem::take(&mut *pending.borrow_mut());
+        if requested.is_empty() {
+            open_workspace(path.map(Into::into), cx);
+        } else {
+            open_system_files(requested, cx);
+        }
+    });
     Ok(())
+}
+
+pub(crate) fn reveal_existing_preview(
+    path: &std::path::Path,
+    exclude: Option<EntityId>,
+    cx: &mut App,
+) -> bool {
+    let Some(windows) = cx.try_global::<OpenWorkspaces>().map(|v| v.0.clone()) else {
+        return false;
+    };
+    windows
+        .into_iter()
+        .filter(|(view, _)| Some(view.entity_id()) != exclude)
+        .any(|(view, _)| {
+            view.update(cx, |v, cx| v.reveal_native_path(path, cx))
+                .unwrap_or(false)
+        })
+}
+
+fn open_system_files(urls: Vec<String>, cx: &mut App) {
+    for value in urls {
+        if let Ok(url) = url::Url::parse(&value)
+            && url.scheme() == "file"
+            && let Ok(path) = url.to_file_path()
+        {
+            if reveal_existing_preview(&path, None, cx) {
+                continue;
+            }
+            let windows = cx.global::<OpenWorkspaces>().0.clone();
+            let reused = windows.iter().rev().any(|(view, handle)| {
+                handle
+                    .update(cx, |_, window, cx| {
+                        view.update(cx, |v, cx| {
+                            v.open_system_file_if_empty(path.clone(), window, cx)
+                        })
+                        .unwrap_or(false)
+                    })
+                    .unwrap_or(false)
+            });
+            if reused {
+                cx.activate(true);
+            } else {
+                open_workspace(Some(path), cx);
+            }
+        }
+    }
 }
 
 fn open_workspace(path: Option<std::path::PathBuf>, cx: &mut App) {

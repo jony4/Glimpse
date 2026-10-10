@@ -17,7 +17,9 @@ AI 时代的全能查看器。原生 macOS 应用，在一个轻巧的窗口里�
 | 数据与接口 | JSON / JSONC / JSONL、GeoJSON、TOML、YAML、SQL、GraphQL、Protobuf；Notebook 查看 JSON 源码 |
 | 配置与构建 | Dockerfile、Containerfile、Makefile、CMake、Nix、INI、`.env`、`.npmrc`、`.editorconfig`、`.gitignore`、Gemfile 等 |
 | 文档与文本 | HTML / Markdown 排版预览（HTML 为静态阅读，不执行脚本）；TXT、日志、CSV 和其他 UTF-8 文件按文本查看 |
+| Apple 办公 | Keynote（KEY）、Pages、Numbers；原生只读预览，支持文件及文档包 |
 | Office | Word（DOC / DOCX）、Excel（XLS / XLSX）、PowerPoint（PPT / PPTX）、RTF；macOS 原生只读预览 |
+| 字体 | TTF、OTF、TTC、OTC、DFONT；字体信息、字形切换、自定义示例与多字号预览 |
 | PDF | 原生窗口阅读、翻页、缩放和文字选择 |
 | 音视频 | MP3、MP4、M4A、MOV、WAV、AAC 等；原生播放控件，文件夹顺序 / 随机队列 |
 | 图片 | PNG、JPEG、WebP、GIF、BMP、TIFF、ICO、SVG、ICNS、EXR、HDR |
@@ -42,6 +44,10 @@ AI 时代的全能查看器。原生 macOS 应用，在一个轻巧的窗口里�
 **[下载最新版 · macOS Apple Silicon](https://github.com/jony4/Glim/releases/latest)**
 
 下载 Release 中的 `.dmg`，打开后将 **Glim.app** 拖入 **Applications（应用程序）**。从旧版 Glimpse 升级时，先退出旧应用，再使用 Glim。
+
+### 设为默认打开方式
+
+安装后，在 **Glim → Default File Types…** 中选择格式，点击 **Set Selected to Glim** 并确认。窗口显示当前默认应用，也可以用 **Restore Selected** 恢复此前保存的默认应用。macOS 按文件类型设置，同一类型的多个后缀可能一起生效。
 
 ### 首次打开被 macOS 拦截？
 

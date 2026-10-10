@@ -12,7 +12,9 @@
 | HTML / HTM | 工作台内静态排版预览与源码切换，不执行 JavaScript；不等同于完整浏览器 CSS 布局 |
 | Markdown | 排版预览、表格、代码块、相对图片、本地链接及源码编辑 |
 | JSON | 源码高亮与只读可折叠树；JSONC / JSONL 使用源码，Notebook 只看 JSON、不执行 |
+| Apple 办公 | `.key`、`.pages`、`.numbers`，通过 Quick Look 预览，兼容目录形式的文档包；不提供编辑或幻灯片动画播放 |
 | Office | DOC / DOCX、XLS / XLSX、PPT / PPTX、RTF，通过系统 Quick Look 只读预览；排版与可用性取决于系统预览器 |
+| 字体 | TTF / OTF / TTC / OTC / DFONT，CoreText 原生只读预览，集合内切换字体，自定义样例文字与多字号展示 |
 | PDF | 原生 PDFKit 窗口，翻页、缩放、文字选择；加密文档可输入密码 |
 | 音视频 | 原生 AVKit 窗口；MP3、MP4、M4A、M4V、MOV、AAC、WAV、AIF/AIFF、CAF、FLAC，具体编码取决于系统解码器 |
 | 图片 | PNG、JPEG、WebP、GIF 首帧、BMP、TIFF、ICO、SVG、含 PNG 表示的 ICNS；EXR/HDR 转 SDR |
@@ -28,6 +30,7 @@
 | 只读分页 | 约 256 KiB/页，补齐 UTF-8 字符；替换旧页，不提供编辑或全文搜索 |
 | 完整只读加载 | 用户确认后最多 64 MiB / 100 万换行符 |
 | JSON 树 | 4 MiB / 50,000 节点，serde_json 默认嵌套深度限制；键和值摘要最多 512 字符 |
+| 字体 | 输入最多 64 MiB，集合显示前 128 个字体，自定义样例最多 512 字符；不安装字体 |
 | 图片 | 输入最多 32 MiB / 1,600 万像素；位图边长最多 8,192，SVG 预览最长 4,000px |
 | safetensors | 头部最多 8 MiB；张量列表最多 2,000 项 / 约 512 KiB，元数据最多 100 项 |
 | 二进制点文件 | 前 64 KiB |
@@ -38,3 +41,5 @@
 ## 格式维护工具
 
 `cargo run -p glim-services --example audit_formats --locked -- /path/to/project` 可按格式抽样调用读取服务，仅输出计数，不输出文件路径与正文。此工具不替代 UI 验证，按需运行。
+
+`.key` 同时可能表示密钥文件：普通文本密钥仍按文本打开，仅 ZIP 容器或目录文档包进入 Keynote 预览。系统文件关联按后缀/类型工作，管理 `.key` 的默认应用时可能同时影响同后缀文件。

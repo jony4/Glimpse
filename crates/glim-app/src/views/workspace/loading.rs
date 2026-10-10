@@ -28,6 +28,24 @@ pub(super) enum Content {
     Unavailable(PathBuf, String),
 }
 impl Workspace {
+    pub(crate) fn reveal_native_path(&self, path: &std::path::Path, cx: &mut App) -> bool {
+        self.tabs
+            .iter()
+            .filter(|r| r.path == path && !r.historical && r.diff.is_none())
+            .any(|r| r.reveal_native(cx))
+    }
+    pub(crate) fn open_system_file_if_empty(
+        &mut self,
+        path: PathBuf,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> bool {
+        if !self.tabs.is_empty() || !self.roots.is_empty() || self.loading {
+            return false;
+        }
+        self.open_path(path, window, cx);
+        true
+    }
     pub(super) fn open_path(&mut self, path: PathBuf, window: &mut Window, cx: &mut Context<Self>) {
         self.results.clear();
         self.search_task = None;
@@ -38,12 +56,16 @@ impl Workspace {
             .position(|t| t.path == path && t.diff.is_none() && !t.historical)
         {
             self.activate_tab(index, window, cx);
+            self.tabs[index].reveal_native(cx);
+            return;
+        }
+        if crate::app::reveal_existing_preview(&path, Some(cx.entity_id()), cx) {
             return;
         }
         self.loading = true;
         self.error = None;
         let read = cx.background_executor().spawn(async move {
-            if path.is_dir() {
+            if path.is_dir() && !glim_services::preview::is_iwork(&path) {
                 open_folder(&path).map(Opened::Folder)
             } else {
                 let result = read_content(&path);
@@ -407,8 +429,7 @@ impl Workspace {
 }
 
 pub(super) fn read_content(path: &std::path::Path) -> anyhow::Result<Content> {
-    if glim_services::preview::supports(path) {
-        anyhow::ensure!(path.is_file(), "Not a regular file: {}", path.display());
+    if glim_services::preview::can_open(path) {
         return Ok(Content::Native(path.to_path_buf(), false, false));
     }
     if path

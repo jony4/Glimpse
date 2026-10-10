@@ -38,9 +38,10 @@ pub fn list_directory(path: &Path) -> Result<Vec<DirectoryEntry>> {
         let Some(kind) = entry.file_type() else {
             continue;
         };
+        let is_document_package = kind.is_dir() && crate::preview::is_iwork(entry.path());
         entries.push(DirectoryEntry {
             path: entry.into_path(),
-            is_dir: kind.is_dir(),
+            is_dir: kind.is_dir() && !is_document_package,
             is_symlink: kind.is_symlink(),
         });
     }
@@ -147,6 +148,7 @@ fn scan_repositories(
                 return false;
             }
             e.file_type().is_some_and(|kind| kind.is_dir())
+                && !crate::preview::is_iwork(e.path())
                 && !matches!(
                     e.file_name().to_str(),
                     Some(".git" | "node_modules" | "target" | "dist")

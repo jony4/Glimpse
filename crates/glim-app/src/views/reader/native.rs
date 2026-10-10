@@ -1,6 +1,6 @@
 use gpui_kit::{
     component::{
-        ActiveTheme, Disableable,
+        ActiveTheme,
         button::{Button, ButtonVariants},
         v_flex,
     },
@@ -21,6 +21,7 @@ pub(super) struct NativeReader {
     shuffle: bool,
     task: Option<Task<()>>,
     cancelled: Arc<AtomicBool>,
+    show: Arc<AtomicBool>,
     error: Option<String>,
 }
 impl NativeReader {
@@ -31,23 +32,27 @@ impl NativeReader {
             shuffle,
             task: None,
             cancelled: Arc::new(AtomicBool::new(false)),
+            show: Arc::new(AtomicBool::new(false)),
             error: None,
         };
         view.open(cx);
         view
     }
-    fn open(&mut self, cx: &mut Context<Self>) {
+    pub(super) fn open(&mut self, cx: &mut Context<Self>) {
         if self.task.is_some() {
+            self.show.store(true, Ordering::Release);
             return;
         }
+        self.show.store(false, Ordering::Release);
         self.error = None;
         let path = self.path.clone();
         let folder = self.folder;
         let shuffle = self.shuffle;
         let cancelled = self.cancelled.clone();
-        let work = cx
-            .background_executor()
-            .spawn(async move { glim_services::preview::open(&path, folder, shuffle, cancelled) });
+        let show = self.show.clone();
+        let work = cx.background_executor().spawn(async move {
+            glim_services::preview::open(&path, folder, shuffle, cancelled, show)
+        });
         self.task = Some(cx.spawn(async move |view, cx| {
             let result = work.await;
             let _ = view.update(cx, |v, cx| {
@@ -99,8 +104,11 @@ impl Render for NativeReader {
             .child(
                 Button::new("open-native-preview")
                     .primary()
-                    .label("Open Preview")
-                    .disabled(self.task.is_some())
+                    .label(if self.task.is_some() {
+                        "Show Preview"
+                    } else {
+                        "Open Preview"
+                    })
                     .on_click(cx.listener(|v, _, _, cx| v.open(cx))),
             )
     }
