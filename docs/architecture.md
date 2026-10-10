@@ -44,7 +44,7 @@ SourceReader 持有长期 EditorState，支持基础输入、选择、撤销/重
 
 ## 文档与媒体
 
-`native/Preview.swift` 使用 PDFKit、AVKit、CoreText 和 Quick Look 提供独立原生窗口；`glim-services/build.rs` 在 macOS 构建时通过 xcrun/Swift 编译对应目标架构，将辅助程序内嵌到 Rust 二进制。正常运行不再调用编译器。`services/preview` 在后台验证文件、枚举有界队列、写入临时清单并启动辅助程序；辅助程序位于独立 `Glim Preview.app` 临时包，使用独立 bundle identifier，清除继承的主应用标识；其 Dock 重开操作唤回预览窗口。临时目录保留到预览窗口退出。`reader/native` 保留任务与取消标记，再次点击已打开文件或标签时，通过进程 stdin 控制通道唤回对应预览窗口并恢复最小化，保持播放进度；跨主窗口和 Finder 打开会复用已有预览。占位页提供 Show Preview 按钮。标签关闭时结束辅助进程，播放不进入文本编辑/刷新流程。Office 与 Apple iWork 格式通过 Quick Look 异步渲染，不在 Rust 中解压或解析文档；原生窗口提供默认应用打开入口作为复杂文档的备用方式。iWork 目录包在文件树中作为文档显示，加载前优先识别，Git 发现不深入扫描；`.key` 普通文件检查 ZIP 标记，避免把文本密钥送入 Keynote 预览。
+`native/Preview.swift` 使用 PDFKit、AVKit、CoreText 和 Quick Look 提供独立原生窗口；`glim-services/build.rs` 在 macOS 构建时通过 xcrun/Swift 编译对应目标架构，将辅助程序内嵌到 Rust 二进制。正常运行不再调用编译器。`services/preview` 在后台验证文件、枚举有界队列、写入临时清单并启动辅助程序；辅助程序位于独立 `Glim Preview.app` 临时包，使用独立 bundle identifier，清除继承的主应用标识；Dock 图标复用 Glim 的 ICNS 并叠加小型预览标记；其 Dock 重开操作唤回预览窗口。临时目录保留到预览窗口退出。`reader/native` 保留任务与取消标记，再次点击已打开文件或标签时，通过进程 stdin 控制通道唤回对应预览窗口并恢复最小化，保持播放进度；跨主窗口和 Finder 打开会复用已有预览。占位页提供 Show Preview 按钮。标签关闭时结束辅助进程，播放不进入文本编辑/刷新流程。Office 与 Apple iWork 格式通过 Quick Look 异步渲染，不在 Rust 中解压或解析文档；原生窗口提供默认应用打开入口作为复杂文档的备用方式。iWork 目录包在文件树中作为文档显示，加载前优先识别，Git 发现不深入扫描；`.key` 普通文件检查 ZIP 标记，避免把文本密钥送入 Keynote 预览。
 
 Explorer 根据已加载目录内容显示播放菜单；未展开的目录按需尝试读取队列，空目录返回明确提示。顺序/随机播放仅处理直接子文件，按自然文件名排序或打乱队列；解码交给系统。纯音频在 AVKit 控件下显示封面、标题、歌手、专辑与渐变背景，无封面时绘制唱片。元数据异步读取，切歌取消旧请求并校验播放项；封面数据最多 8 MiB，解码为最长 600px 缩略图。背景按视图边界裁剪；音频曲目信息下方提供随播放时间变化的装饰律动条，暂停静止，遵循系统减少动态效果设置，并在窗口不可见时停止重绘。该动效不表示真实音频频谱。视频隐藏该背景。所有菜单构建只读缓存。Files 的添加文件夹菜单绑定到末行下方的独立空白区域，不包裹文件/目录行；行级菜单与空白菜单不存在嵌套关系。
 

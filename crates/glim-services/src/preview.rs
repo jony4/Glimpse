@@ -163,6 +163,12 @@ fn launch(
         let contents = directory.path().join(format!("{helper_name}.app/Contents"));
         let binaries = contents.join("MacOS");
         std::fs::create_dir_all(&binaries)?;
+        let resources = contents.join("Resources");
+        std::fs::create_dir_all(&resources)?;
+        std::fs::write(
+            resources.join("Glim.icns"),
+            include_bytes!("../../../assets/macos/Glim.icns"),
+        )?;
         let info = r#"<?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0"><dict>
@@ -170,6 +176,7 @@ fn launch(
 <key>CFBundleDisplayName</key><string>Glim Preview</string>
 <key>CFBundleIdentifier</key><string>io.github.jony4.glim.preview</string>
 <key>CFBundleExecutable</key><string>glim-preview</string>
+<key>CFBundleIconFile</key><string>Glim</string>
 <key>CFBundlePackageType</key><string>APPL</string>
 <key>NSHighResolutionCapable</key><true/>
 </dict></plist>"#;
