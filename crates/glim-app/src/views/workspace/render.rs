@@ -17,7 +17,7 @@ use gpui_kit::{
 };
 
 impl Render for Workspace {
-    fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let path = self.active_reader().map(|r| {
             r.path
                 .strip_prefix(self.root.as_deref().unwrap_or(std::path::Path::new("")))
@@ -50,13 +50,29 @@ impl Render for Workspace {
             });
         let content = match self.active.and_then(|i| self.tabs.get_mut(i)) {
             Some(reader) => reader.render(open, cx),
-            None => welcome(cx).into_any_element(),
+            None if !self.sidebar_visible => div()
+                .relative()
+                .size_full()
+                .child(
+                    // Anchor the empty state to the entire window, including the activity bar
+                    // and title bar, so it shares the header search field's center line.
+                    div()
+                        .absolute()
+                        .right_0()
+                        .bottom_0()
+                        .w(window.viewport_size().width)
+                        .h(window.viewport_size().height)
+                        .child(welcome(self.roots.is_empty(), cx)),
+                )
+                .into_any_element(),
+            None => welcome(self.roots.is_empty(), cx).into_any_element(),
         };
+        let gesture_view = cx.entity().downgrade();
         let viewer = v_flex()
             .size_full()
             .min_w_0()
             .overflow_hidden()
-            .child(tab_bar)
+            .when(!self.tabs.is_empty(), |view| view.child(tab_bar))
             .when_some(path, |view, path| {
                 view.child(
                     h_flex()
@@ -67,25 +83,67 @@ impl Render for Workspace {
                         .border_b_1()
                         .border_color(cx.theme().border)
                         .text_color(cx.theme().muted_foreground)
-                        .child(div().flex_1().min_w_0().truncate().child(path))
-                        .when(
-                            self.active_reader().is_some_and(|r| r.diff.is_some()),
-                            |bar| {
-                                bar.child(
-                                    Button::new("show-file")
-                                        .ghost()
-                                        .label("View file")
-                                        .on_click(cx.listener(|view, _, window, cx| {
-                                            if let Some(reader) = view.active_reader() {
-                                                view.open_path(reader.path.clone(), window, cx);
-                                            }
-                                        })),
-                                )
-                            },
-                        ),
+                        .child(div().flex_1().min_w_0().truncate().child(path)),
                 )
             })
-            .child(div().flex_1().min_h_0().w_full().child(content));
+            .when_some(
+                self.active_reader()
+                    .and_then(|reader| reader.history_summary()),
+                |view, (subject, detail)| {
+                    view.child(
+                        v_flex()
+                            .flex_shrink_0()
+                            .px_4()
+                            .py_2()
+                            .gap_1()
+                            .border_b_1()
+                            .border_color(cx.theme().border)
+                            .child(
+                                div()
+                                    .text_sm()
+                                    .font_weight(FontWeight::SEMIBOLD)
+                                    .truncate()
+                                    .child(subject),
+                            )
+                            .child(
+                                div()
+                                    .text_xs()
+                                    .text_color(cx.theme().muted_foreground)
+                                    .truncate()
+                                    .child(detail),
+                            ),
+                    )
+                },
+            )
+            .child(
+                div()
+                    .relative()
+                    .flex_1()
+                    .min_h_0()
+                    .w_full()
+                    .child(content)
+                    .child(
+                        canvas(
+                            |_, _, _| (),
+                            move |bounds, _, window, _| {
+                                let view = gesture_view.clone();
+                                window.on_mouse_event(
+                                    move |event: &ScrollWheelEvent, phase, window, cx| {
+                                        if phase == DispatchPhase::Capture
+                                            && bounds.contains(&event.position)
+                                        {
+                                            let _ = view.update(cx, |v, cx| {
+                                                v.history_swipe(event, window, cx)
+                                            });
+                                        }
+                                    },
+                                );
+                            },
+                        )
+                        .absolute()
+                        .size_full(),
+                    ),
+            );
         let panel_content = match self.sidebar {
             Sidebar::Files => self.explorer.as_ref().map(|v| v.clone().into_any_element()),
             Sidebar::Changes => self.changes.as_ref().map(|v| v.clone().into_any_element()),
@@ -142,14 +200,20 @@ impl Render for Workspace {
                     ),
             )
             .child(div().flex_1().min_h_0().w_full().child(panel_content))
-            .id("workspace-sidebar")
-            .context_menu(|menu, _, _| {
-                menu.item(PopupMenuItem::new("Add Folder to Workspace…").on_click(
-                    |_, window, cx| {
-                        window.dispatch_action(Box::new(AddFolder), cx);
-                    },
-                ))
-            });
+            .id("workspace-sidebar");
+        let sidebar = if self.sidebar == Sidebar::Files && self.explorer.is_none() {
+            sidebar
+                .context_menu(|menu, _, _| {
+                    menu.item(PopupMenuItem::new("Add Folder to Workspace…").on_click(
+                        |_, window, cx| {
+                            window.dispatch_action(Box::new(AddFolder), cx);
+                        },
+                    ))
+                })
+                .into_any_element()
+        } else {
+            sidebar.into_any_element()
+        };
         let activity = v_flex()
             .w(px(52.))
             .h_full()
@@ -216,6 +280,22 @@ impl Render for Workspace {
             .bg(cx.theme().background)
             .text_color(cx.theme().foreground)
             .child(header)
+            .on_mouse_down(
+                MouseButton::Navigate(NavigationDirection::Back),
+                cx.listener(|v, _, w, cx| {
+                    v.history_swipe = None;
+                    v.navigate(false, w, cx);
+                    cx.stop_propagation();
+                }),
+            )
+            .on_mouse_down(
+                MouseButton::Navigate(NavigationDirection::Forward),
+                cx.listener(|v, _, w, cx| {
+                    v.history_swipe = None;
+                    v.navigate(true, w, cx);
+                    cx.stop_propagation();
+                }),
+            )
             .on_action(cx.listener(|v, _: &AddFolder, w, cx| v.choose_add_folder(w, cx)))
             .on_action(cx.listener(|v, _: &OpenFile, w, cx| v.choose_path(false, w, cx)))
             .on_action(cx.listener(|v, _: &OpenFolder, w, cx| v.choose_path(true, w, cx)))

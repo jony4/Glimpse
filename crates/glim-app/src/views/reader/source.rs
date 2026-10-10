@@ -109,7 +109,11 @@ impl SourceReader {
             .update(cx, |s, cx| s.set_scroll_offset(offset, cx));
     }
     pub fn render(&mut self, cx: &mut App) -> AnyElement {
-        let menu_state = self.state.clone();
+        // The toolkit invokes custom menus while updating EditorState. Capture
+        // capabilities during rendering instead of re-entering that entity.
+        let capabilities = self.state.read(cx).context_menu_capabilities();
+        let menu_editable = capabilities.is_editable();
+        let menu_copyable = capabilities.is_copyable();
         self.minimap
             .update(cx, |map, cx| map.set_preview(false, cx));
         let palette = (cx.theme().green, cx.theme().red);
@@ -152,8 +156,8 @@ impl SourceReader {
                     .overflow_hidden()
                     .child(
                         Editor::new(&self.state)
-                            .context_menu(move |menu, _, cx| {
-                                super::editor_menu(menu, &menu_state, cx)
+                            .context_menu(move |menu, _, _| {
+                                super::editor_menu(menu, menu_editable, menu_copyable)
                             })
                             .readonly(self.readonly || self.locked)
                             .appearance(false)

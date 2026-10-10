@@ -10,6 +10,9 @@ use actions::{AddFolder, CloseWindow, NewWindow, OpenFile, OpenFolder, Quit, Ref
 
 pub struct ReaderPreferences {
     pub word_wrap: bool,
+    pub html_preview: bool,
+    pub markdown_preview: bool,
+    pub preview_save_task: Option<Task<()>>,
 }
 impl Global for ReaderPreferences {}
 
@@ -27,12 +30,19 @@ pub fn run() -> Result<()> {
     }
 
     let word_wrap = glim_services::preferences::word_wrap();
+    let html_preview = glim_services::preferences::preview_mode("html");
+    let markdown_preview = glim_services::preferences::preview_mode("markdown");
     gpui_kit::application()
         .with_assets(assets::Assets)
         .run(move |cx| {
             gpui_kit::init(cx);
             languages::init();
-            cx.set_global(ReaderPreferences { word_wrap });
+            cx.set_global(ReaderPreferences {
+                word_wrap,
+                html_preview,
+                markdown_preview,
+                preview_save_task: None,
+            });
             cx.set_global(OpenWorkspaces::default());
             gpui_kit::component::Theme::set_scrollbar_mode(
                 gpui_kit::component::scroll::ScrollbarMode::Hover,

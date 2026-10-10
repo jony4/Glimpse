@@ -87,6 +87,52 @@ pub fn diff_content(patch: &str) -> (String, Vec<DiffSpan>) {
     (text, spans)
 }
 
+/// Keep file boundaries without Git's raw commit preamble, presenting each patch using
+/// exactly the same content filtering and changed-line spans as an inline diff.
+pub fn commit_content(patch: &str) -> (String, Vec<DiffSpan>) {
+    let mut text = String::new();
+    let mut spans = Vec::new();
+    let mut section = String::new();
+    let mut title = None;
+    fn append(text: &mut String, spans: &mut Vec<DiffSpan>, title: &str, section: &str) {
+        text.push_str("\n\n");
+        text.push_str(title);
+        text.push_str("\n\n");
+        let (content, changes) = diff_content(section);
+        let offset = text.len();
+        text.push_str(&content);
+        spans.extend(changes.into_iter().map(|span| DiffSpan {
+            range: span.range.start + offset..span.range.end + offset,
+            addition: span.addition,
+        }));
+    }
+    for line in patch.split_inclusive('\n') {
+        if let Some(paths) = line.strip_prefix("diff --git ") {
+            if let Some(title) = title.take() {
+                append(&mut text, &mut spans, title, &section);
+                section.clear();
+            }
+            // Git quotes unusual paths; retain those names intact as a fallback.
+            title = Some(
+                paths
+                    .trim_end()
+                    .split_once(" b/")
+                    .map_or(paths.trim_end(), |(_, path)| path),
+            );
+            section.push_str(line);
+        } else if title.is_some() {
+            section.push_str(line);
+        }
+    }
+    if let Some(title) = title {
+        append(&mut text, &mut spans, title, &section);
+    }
+    if text.is_empty() {
+        text.push_str("No file changes in this commit.");
+    }
+    (text, spans)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

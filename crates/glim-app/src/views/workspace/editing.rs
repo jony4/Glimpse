@@ -4,6 +4,7 @@ use gpui_kit::*;
 
 pub(super) enum DiscardAction {
     CloseTab(usize),
+    CloseTabs(Vec<super::header::Target>),
     CloseWindow,
     Folder(FolderSnapshot),
     Quit,
@@ -152,6 +153,7 @@ impl Workspace {
     ) {
         match action {
             DiscardAction::CloseTab(index) => self.close_tab_unchecked(index, window, cx),
+            DiscardAction::CloseTabs(targets) => self.close_tabs_unchecked(targets, window, cx),
             DiscardAction::CloseWindow => window.remove_window(),
             DiscardAction::Folder(folder) => self.replace_folder(folder, window, cx),
             DiscardAction::Quit => {

@@ -2,11 +2,11 @@ use super::Workspace;
 use crate::views::reader::Reader;
 use gpui_kit::{
     component::{
-        ActiveTheme, Disableable, Icon, Selectable, Sizable,
-        button::{Button, ButtonCustomVariant, ButtonVariants},
+        ActiveTheme,
+        button::{Button, ButtonVariants},
         h_flex,
+        menu::{ContextMenuExt, PopupMenu, PopupMenuItem},
     },
-    prelude::FluentBuilder,
     *,
 };
 
@@ -31,6 +31,108 @@ impl Workspace {
             self.record_history();
             cx.notify();
         }
+    }
+
+    fn close_tabs(
+        &mut self,
+        targets: Vec<super::header::Target>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if targets.is_empty() {
+            return;
+        }
+        if self.is_saving()
+            || self
+                .tabs
+                .iter()
+                .any(|r| r.is_dirty() && targets.contains(&super::header::Target::from_reader(r)))
+        {
+            self.confirm_discard(
+                super::editing::DiscardAction::CloseTabs(targets),
+                window,
+                cx,
+            );
+        } else {
+            self.close_tabs_unchecked(targets, window, cx);
+        }
+    }
+    pub(super) fn close_tabs_unchecked(
+        &mut self,
+        targets: Vec<super::header::Target>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if self.is_saving() {
+            self.error = Some(
+                "A save or Git operation is in progress. Please retry after it finishes.".into(),
+            );
+            cx.notify();
+            return;
+        }
+        let active = self.active_reader().map(super::header::Target::from_reader);
+        let previous = self.active.unwrap_or(0);
+        self.tabs
+            .retain(|r| !targets.contains(&super::header::Target::from_reader(r)));
+        self.load_task = None;
+        self.loading = false;
+        self.active = active
+            .and_then(|target| {
+                self.tabs
+                    .iter()
+                    .position(|r| super::header::Target::from_reader(r) == target)
+            })
+            .or_else(|| (!self.tabs.is_empty()).then(|| previous.min(self.tabs.len() - 1)));
+        self.observe_autosave(window, cx);
+        if let Some(index) = self.active {
+            self.activate_tab(index, window, cx);
+        } else {
+            window.set_window_title("Glim");
+            window.focus(&self.focus, cx);
+        }
+        cx.notify();
+    }
+    fn tab_context_menu(
+        &self,
+        mut menu: PopupMenu,
+        target: &super::header::Target,
+        cx: &mut Context<Self>,
+    ) -> PopupMenu {
+        let Some(index) = self
+            .tabs
+            .iter()
+            .position(|r| super::header::Target::from_reader(r) == *target)
+        else {
+            return menu;
+        };
+        for (label, mode) in [
+            ("Close", 0),
+            ("Close Tabs to the Right", 1),
+            ("Close Other Tabs", 2),
+            ("Close All Tabs", 3),
+        ] {
+            let targets: Vec<_> = self
+                .tabs
+                .iter()
+                .enumerate()
+                .filter(|(i, _)| match mode {
+                    0 => *i == index,
+                    1 => *i > index,
+                    2 => *i != index,
+                    _ => true,
+                })
+                .map(|(_, r)| super::header::Target::from_reader(r))
+                .collect();
+            let view = cx.entity().downgrade();
+            menu = menu.item(
+                PopupMenuItem::new(label)
+                    .disabled(targets.is_empty())
+                    .on_click(move |_, w, cx| {
+                        let _ = view.update(cx, |v, cx| v.close_tabs(targets.clone(), w, cx));
+                    }),
+            );
+        }
+        menu
     }
 
     pub(super) fn close_tab(&mut self, index: usize, window: &mut Window, cx: &mut Context<Self>) {
@@ -73,12 +175,21 @@ impl Workspace {
                 .enumerate()
                 .map(|(index, reader)| {
                     let active = self.active == Some(index);
+                    let target = super::header::Target::from_reader(reader);
+                    let menu_view = cx.entity().downgrade();
                     let mut label = reader
-                        .path
+                        .commit_file
+                        .as_ref()
+                        .unwrap_or(&reader.path)
                         .file_name()
                         .unwrap_or_default()
                         .to_string_lossy()
                         .into_owned();
+                    if reader.commit_file.is_some()
+                        && let Some(oid) = &reader.commit_id
+                    {
+                        label.push_str(&format!(" · {}", &oid[..8.min(oid.len())]));
+                    }
                     if let Some(diff) = &reader.diff {
                         label.push_str(&format!(" · {}", diff.scope.label()));
                     }
@@ -108,21 +219,10 @@ impl Workspace {
                             view.activate_tab(index, window, cx)
                         }))
                         .child(
-                            Button::new(("activate-tab", index))
-                                .custom(ButtonCustomVariant::new(cx))
-                                .accessibility_label(format!("Show {}", reader.title))
-                                .child(
-                                    h_flex()
-                                        .gap_2()
-                                        .child(crate::views::file_icons::file_icon(&reader.path))
-                                        .child(
-                                            div().max_w(px(210.)).truncate().text_sm().child(label),
-                                        ),
-                                )
-                                .on_click(cx.listener(move |view, _, window, cx| {
-                                    cx.stop_propagation();
-                                    view.activate_tab(index, window, cx);
-                                })),
+                            h_flex()
+                                .gap_2()
+                                .child(crate::views::file_icons::file_icon(&reader.path))
+                                .child(div().max_w(px(210.)).truncate().text_sm().child(label)),
                         )
                         .child(
                             Button::new(("close-tab", index))
@@ -140,6 +240,11 @@ impl Workspace {
                                     view.close_tab(index, window, cx);
                                 })),
                         )
+                        .context_menu(move |menu, _, cx| {
+                            menu_view
+                                .update(cx, |v, cx| v.tab_context_menu(menu, &target, cx))
+                                .expect("Tab menu owner is alive")
+                        })
                 })
                 .collect::<Vec<_>>();
         h_flex()
@@ -158,44 +263,6 @@ impl Workspace {
                     .h_full()
                     .overflow_x_scroll()
                     .children(tabs),
-            )
-            .when(
-                self.active_reader().is_some_and(|r| r.diff.is_some()),
-                |bar| {
-                    let split = self.active_reader().is_some_and(|r| r.side_by_side());
-                    let available = self.active_reader().is_some_and(|r| r.split_available());
-                    bar.child(
-                        Button::new("diff-split")
-                            .ghost()
-                            .icon(Icon::new(gpui_kit::assets::IconName::Columns2))
-                            .xsmall()
-                            .tooltip("Side by side")
-                            .accessibility_label("Side by side")
-                            .selected(split)
-                            .disabled(!available)
-                            .on_click(cx.listener(|v, _, _, cx| {
-                                if let Some(i) = v.active {
-                                    v.tabs[i].set_side_by_side(true);
-                                }
-                                cx.notify();
-                            })),
-                    )
-                    .child(
-                        Button::new("diff-inline")
-                            .ghost()
-                            .icon(Icon::new(gpui_kit::assets::IconName::Rows2))
-                            .xsmall()
-                            .tooltip("Inline")
-                            .accessibility_label("Inline")
-                            .selected(!split)
-                            .on_click(cx.listener(|v, _, _, cx| {
-                                if let Some(i) = v.active {
-                                    v.tabs[i].set_side_by_side(false);
-                                }
-                                cx.notify();
-                            })),
-                    )
-                },
             )
             .into_any_element()
     }

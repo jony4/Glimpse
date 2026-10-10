@@ -278,12 +278,11 @@ pub fn graph(root: &Path, limit: usize, all: bool) -> Result<Vec<GraphRow>> {
         root,
         &[
             "log",
-            "--graph",
             "--topo-order",
             "--no-color",
             "--decorate=short",
             &count,
-            "--format=%x00%H%x00%h%x00%an%x00%ar%x00%d%x00%s",
+            "--format=%H%x00%h%x00%an%x00%ar%x00%d%x00%P%x00%s",
             scope,
             "--",
         ],
@@ -291,28 +290,19 @@ pub fn graph(root: &Path, limit: usize, all: bool) -> Result<Vec<GraphRow>> {
     let mut rows = Vec::new();
     for line in String::from_utf8_lossy(&bytes).lines() {
         let fields: Vec<_> = line.splitn(7, '\0').collect();
-        if fields.len() == 7 {
-            rows.push(GraphRow {
-                graph: fields[0].into(),
-                commit: Some(fields[1].into()),
-                short_id: fields[2].into(),
-                author: fields[3].into(),
-                age: fields[4].into(),
-                references: fields[5].trim().into(),
-                subject: fields[6].into(),
-            });
-        } else {
-            rows.push(GraphRow {
-                graph: line.into(),
-                commit: None,
-                short_id: String::new(),
-                author: String::new(),
-                age: String::new(),
-                references: String::new(),
-                subject: String::new(),
-            });
-        }
+        ensure!(fields.len() == 7, "Invalid Git history record");
+        rows.push(GraphRow {
+            commit: Some(fields[0].into()),
+            short_id: fields[1].into(),
+            author: fields[2].into(),
+            age: fields[3].into(),
+            references: fields[4].trim().into(),
+            parents: fields[5].split_whitespace().map(str::to_owned).collect(),
+            subject: fields[6].into(),
+            layout: Default::default(),
+        });
     }
+    glim_core::layout_graph(&mut rows);
     Ok(rows)
 }
 pub fn commit_details(root: &Path, oid: &str) -> Result<String> {
@@ -336,4 +326,84 @@ pub fn commit_details(root: &Path, oid: &str) -> Result<String> {
         ],
     )?;
     Ok(String::from_utf8_lossy(&bytes).into_owned())
+}
+
+#[derive(Clone)]
+pub struct CommitFile {
+    pub path: std::path::PathBuf,
+    pub previous_path: Option<std::path::PathBuf>,
+    pub status: char,
+}
+
+/// Read names only; expanding a commit never loads its patch or file contents.
+pub fn commit_files(root: &Path, oid: &str) -> Result<Vec<CommitFile>> {
+    ensure!(
+        matches!(oid.len(), 40 | 64) && oid.bytes().all(|b| b.is_ascii_hexdigit()),
+        "Invalid commit ID"
+    );
+    let bytes = checked(
+        root,
+        &[
+            "diff-tree",
+            "--root",
+            "--first-parent",
+            "-m",
+            "-r",
+            "--no-commit-id",
+            "--name-status",
+            "-z",
+            "-M",
+            oid,
+            "--",
+        ],
+    )?;
+    let mut parts = bytes.split(|b| *b == 0).filter(|p| !p.is_empty());
+    let mut files = Vec::new();
+    while let Some(status) = parts.next() {
+        let status = *status.first().context("Missing change status")? as char;
+        let first = super::path_from_bytes(parts.next().context("Missing changed path")?);
+        let (path, previous_path) = if matches!(status, 'R' | 'C') {
+            (
+                super::path_from_bytes(parts.next().context("Missing destination path")?),
+                Some(first),
+            )
+        } else {
+            (first, None)
+        };
+        files.push(CommitFile {
+            path,
+            previous_path,
+            status,
+        });
+    }
+    Ok(files)
+}
+
+pub fn commit_file_details(root: &Path, oid: &str, path: &Path) -> Result<String> {
+    let file = commit_files(root, oid)?
+        .into_iter()
+        .find(|file| file.path == path)
+        .context("File is not part of this commit")?;
+    let mut args: Vec<&OsStr> = [
+        "show",
+        "--no-ext-diff",
+        "--no-textconv",
+        "--no-color",
+        "--format=fuller",
+        "--patch",
+        "--diff-merges=first-parent",
+        "-M",
+        oid,
+        "--",
+    ]
+    .into_iter()
+    .map(OsStr::new)
+    .collect();
+    args.push(file.path.as_os_str());
+    if let Some(previous) = &file.previous_path {
+        args.push(previous.as_os_str());
+    }
+    let output = run(root, &args)?;
+    ensure!(output.code == Some(0), "{}", output.stderr);
+    Ok(String::from_utf8_lossy(&output.bytes).into_owned())
 }

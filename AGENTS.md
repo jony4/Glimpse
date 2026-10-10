@@ -15,3 +15,5 @@
 - When UI smoke testing is requested, use macOS when available and report unverified interactions.
 - Document changes to module boundaries in docs/architecture.md.
 - When explicitly asked to package Glim, also install the new build over the existing local Glim.app by default, preserving a recoverable backup, unless the user asks for packaging only. Verify the installed bundle and launch it.
+
+- Keep documentation focused on current behavior, architecture and unfinished work. Put release notes in GitHub Releases; do not accumulate per-session operation logs, historical verification reports or personal filesystem inventories in the repository.

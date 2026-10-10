@@ -112,11 +112,89 @@ pub struct GitRequest {
 }
 #[derive(Clone, Debug)]
 pub struct GraphRow {
-    pub graph: String,
+    pub parents: Vec<String>,
+    pub layout: GraphLayout,
     pub commit: Option<String>,
     pub short_id: String,
     pub author: String,
     pub age: String,
     pub references: String,
     pub subject: String,
+}
+
+#[derive(Clone, Debug, Default)]
+pub struct GraphLayout {
+    pub node: usize,
+    pub color: usize,
+    pub incoming: bool,
+    pub through: Vec<(usize, usize, usize)>,
+    pub parents: Vec<(usize, usize)>,
+    pub after: Vec<usize>,
+    pub width: usize,
+}
+
+/// Track pending parent IDs, not ASCII glyph positions. Each boundary uses the
+/// same lane list as the adjacent row, including across merges and branch ends.
+pub fn layout_graph(rows: &mut [GraphRow]) {
+    let mut lanes: Vec<(String, usize)> = Vec::new();
+    let mut next_color = 0;
+    for row in rows {
+        let Some(oid) = &row.commit else {
+            continue;
+        };
+        let incoming = lanes.iter().any(|(id, _)| id == oid);
+        let node = lanes
+            .iter()
+            .position(|(id, _)| id == oid)
+            .unwrap_or_else(|| {
+                let index = lanes.len();
+                lanes.push((oid.clone(), next_color));
+                next_color += 1;
+                index
+            });
+        let before = lanes.clone();
+        let color = lanes.remove(node).1;
+        let mut insert = node.min(lanes.len());
+        for (index, parent) in row.parents.iter().enumerate() {
+            if !lanes.iter().any(|(id, _)| id == parent) {
+                let parent_color = if index == 0 {
+                    color
+                } else {
+                    let c = next_color;
+                    next_color += 1;
+                    c
+                };
+                lanes.insert(insert, (parent.clone(), parent_color));
+                insert += 1;
+            }
+        }
+        row.layout = GraphLayout {
+            node,
+            color,
+            incoming,
+            width: before.len().max(lanes.len()),
+            through: before
+                .iter()
+                .enumerate()
+                .filter(|(i, _)| *i != node)
+                .filter_map(|(from, (id, color))| {
+                    lanes
+                        .iter()
+                        .position(|(other, _)| id == other)
+                        .map(|to| (from, to, *color))
+                })
+                .collect(),
+            parents: row
+                .parents
+                .iter()
+                .filter_map(|parent| {
+                    lanes
+                        .iter()
+                        .position(|(id, _)| id == parent)
+                        .map(|to| (to, lanes[to].1))
+                })
+                .collect(),
+            after: lanes.iter().map(|(_, color)| *color).collect(),
+        };
+    }
 }

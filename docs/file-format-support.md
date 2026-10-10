@@ -1,78 +1,40 @@
-# 文件格式支持
+# 格式与限制
 
-当前完整支持矩阵与内存边界见 [README](../README.md#一个窗口读懂更多文件)。
+主要格式见 [README](../README.md#支持的格式)。本文记录当前实现边界，不记录个人目录扫描或历史验证结果。
 
-## 2026-10-10：本机文件名盘点与本轮新增
+## 渲染方式
 
-在 `/Users/niuqiang/` 进行只读文件名统计，没有读取用户文件正文。首轮有界抽样覆盖 400,000 项；第二轮排除 Library、依赖、缓存、Git 与构建目录后扫描 206,700 项。两次存在重叠，不将数量相加，也不宣称是全盘穷举。
+| 内容 | 当前行为 |
+| --- | --- |
+| 常见编程语言 | Tree-sitter 高亮，普通源码支持行号、折叠、搜索和 Minimap |
+| Jinja / Nunjucks / Twig、Dockerfile、INI、dotenv、忽略规则、Nix | 可见行轻量着色，不提供完整跨行语义解析 |
+| Vue、XML / plist、SCSS / LESS、Cython、CUDA / Metal、GLSL / OSL | 分别复用 HTML、CSS、Python、C++、C 高亮，不提供专用语义校验 |
+| HTML / HTM | 工作台内静态排版预览与源码切换，不执行 JavaScript；不等同于完整浏览器 CSS 布局 |
+| Markdown | 排版预览、表格、代码块、相对图片、本地链接及源码编辑 |
+| JSON | 源码高亮与只读可折叠树；JSONC / JSONL 使用源码，Notebook 只看 JSON、不执行 |
+| Office | DOC / DOCX、XLS / XLSX、PPT / PPTX、RTF，通过系统 Quick Look 只读预览；排版与可用性取决于系统预览器 |
+| PDF | 原生 PDFKit 窗口，翻页、缩放、文字选择；加密文档可输入密码 |
+| 音视频 | 原生 AVKit 窗口；MP3、MP4、M4A、M4V、MOV、AAC、WAV、AIF/AIFF、CAF、FLAC，具体编码取决于系统解码器 |
+| 图片 | PNG、JPEG、WebP、GIF 首帧、BMP、TIFF、ICO、SVG、含 PNG 表示的 ICNS；EXR/HDR 转 SDR |
+| safetensors | 仅读取头部，展示张量、shape、参数数量、精度和元数据；不加载权重或执行模型 |
+| CSV、RST、日志等 UTF-8 文件 | 文本阅读与基础编辑，不提供表格或专用排版 |
+| 二进制点文件（如 .DS_Store） | 有界十六进制/ASCII 预览，不提供语义解析或编辑 |
 
-第二轮观察到 properties 108、CSV 85、TOML 84、RST 18、Nix 18、INI 11、safetensors 2、ipynb 2、Jinja 1、ONNX 1；另观察到 Dockerfile、.npmrc、.editorconfig、.env 与忽略规则文件。数量只反映本次扫描覆盖范围。
+## 资源预算
 
-新增 Dockerfile/Containerfile、INI/常见 rc、dotenv、ignore、Jinja/Nunjucks/Twig、Nix 轻量着色；扩展 XML/plist、SCSS、Cython、GeoJSON/notebook JSON 和常见 lockfile 映射。safetensors 提供有界头部摘要。普通文本预算提高至 8 MiB，超大文本/超长行使用 256 KiB 分页与确认后的有界完整视图。
+| 模式 | 限制 |
+| --- | --- |
+| 普通文本编辑 | 8 MiB；超过 10 万换行符或单行超过 16 KiB 时进入分页 |
+| 只读分页 | 约 256 KiB/页，补齐 UTF-8 字符；替换旧页，不提供编辑或全文搜索 |
+| 完整只读加载 | 用户确认后最多 64 MiB / 100 万换行符 |
+| JSON 树 | 4 MiB / 50,000 节点，serde_json 默认嵌套深度限制；键和值摘要最多 512 字符 |
+| 图片 | 输入最多 32 MiB / 1,600 万像素；位图边长最多 8,192，SVG 预览最长 4,000px |
+| safetensors | 头部最多 8 MiB；张量列表最多 2,000 项 / 约 512 KiB，元数据最多 100 项 |
+| 二进制点文件 | 前 64 KiB |
+| Git | 单次 stdout 最多 8 MiB；Graph 最多 1,000 提交、分支最多 1,000 引用、stash 最多 100 条 |
 
-本轮按用户要求只修改代码，未运行测试、构建、安装或 UI 验证。以下历史验证记录不代表本轮改动已经通过验证。
+预算按打开的文件计算，多标签会累计内存占用。safetensors 只做头部和偏移范围检查，不等同于完整模型验证。SVG 不解析外部文件资源。非 UTF-8 文本和归档内容尚无专用预览。Office 不提供编辑、公式重算或宏执行；复杂排版、加密文档或缺少系统预览器时，可从预览窗口选择默认应用打开。文件夹播放只枚举直接子文件，最多 10,000 项，顺序采用自然文件名排序，随机播放将队列打乱；无法播放的条目跳过。PDF 和音视频通过系统框架按需加载，不读入 Rust 文本缓冲区。
 
-## 历史适配记录
+## 格式维护工具
 
-# 早期适配记录（2026-10-10）
-
-对 /Users/neo/dev 进行文件名统计，跳过 Git、依赖和缓存目录。
-实文件检查按选定格式最多抽取 5 个样本，跳过隐藏目录和凭据文件；
-只输出格式和通过数量，不输出文件内容。这不是对全部文件的穷举验证。
-
-| 格式 | 目录内数量 | 本次支持 |
-| --- | ---: | --- |
-| Java | 1648 | 专用 Java 语法高亮 |
-| SQL | 22 | 专用 SQL 语法高亮 |
-| Vue | 619 | HTML 基础高亮，现有 JS/CSS 嵌入；不是完整 Vue/TS 语义支持 |
-| XML / MaterialX / TMX | 82 / 100 / 1 | HTML 语法提供基础标签高亮，无 XML schema 校验 |
-| GLSL / OSL | 216 / 173 | C 风格基础高亮，无着色器验证 |
-| Metal / CUDA | 15 / 6 | C++ 基础高亮 |
-| Cython pxd / pyx | 139 / 10 | Python 基础高亮，非完整 Cython 语法 |
-| JSONL | 8 | JSON token 高亮，非数据表格 |
-| LESS / Handlebars / OpenColorIO | 11 / 1 / 1 | CSS / HTML / YAML 基础高亮 |
-| EXR / HDR | 31 / 3 | SDR 图片预览，不支持 HDR 色彩管理、曝光调整或多图层 |
-| SVG | 453 | 修复大画布无法打开，预览按比例缩至最长 4000px |
-| Makefile / .mk | — | Make 语法高亮 |
-| .command 和常见 shell 配置名 | — | Bash 高亮 |
-
-CSV、RST、INI、日志、properties、systemd、USDA 等 UTF-8 文本此前已能打开，
-继续使用文本查看/编辑；CSV 尚无单元格视图，RST 尚无排版预览。
-历史版本文本限制是 2 MiB，图片输入限制 32 MiB，位图保留原有像素和内存限制。
-
-## 点开头的文件
-
-不按隐藏文件名或缺少扩展名拒绝文件。UTF-8 文本正常查看和编辑。
-无法作为文本或图片解码的点文件（例如 .DS_Store）使用只读字节预览：
-显示偏移、十六进制和 ASCII，最多前 64 KiB，并明确标记截断。
-这是原始字节查看，不是 .DS_Store 语义解析，也不支持二进制编辑。
-历史版本中超过文本大小限制的点文件同样降级到字节预览；当前版本改为文本分页；权限不足、失效链接等仍会报错。
-使用临时的 .env、.npmrc、.gitignore、.config.local 和二进制样本测试，
-未读取用户真实凭据文件。
-
-## 暂缓的专用预览
-
-| 格式 | 数量 | 所需工作 |
-| --- | ---: | --- |
-| XLSX / XLSM | 8 / 1 | 工作簿解析、工作表切换、单元格表格和大表限制 |
-| DOCX / PPTX | 3 / 3 | 页面/幻灯片排版、字体、嵌入媒体 |
-| PDF | 4 | 分页渲染、缓存、缩放、文字选择和链接 |
-| DWG | 3 | 专用 CAD 解码与图形浏览 |
-| BLEND | 15 | Blender 场景解析或外部渲染流程 |
-| ZIP / WHL / ZST | 1 / 2 / 54 | 有限制的归档浏览和解压流程 |
-| 字体、编译库、可执行文件、编译着色器 | 多种 | 各自的元数据或二进制检查器 |
-
-.dat 和数字后缀不代表固定格式，不盲目按扩展名转换。
-
-## 验证与维护
-
-实文件抽样共 19 类、81 个样本，通过现有服务入口全部成功读取/解码；
-其中原先失败的两个 SVG 是画布尺寸超限，现已修复。
-实文件抽样不等同于逐个 UI 渲染验证。
-
-复现命令：
-cargo run -p glim-services --example audit_formats --locked -- /path/to/project
-
-GPUI Kit 仍固定 0.7.1，仅添加 Java/SQL/Make grammar 功能。
-SQL grammar 的构建依赖要求 cc 1.2.x，Cargo.lock 中 cc 从 1.6.0
-调整为 1.2.67，其余已有依赖版本保留。
+`cargo run -p glim-services --example audit_formats --locked -- /path/to/project` 可按格式抽样调用读取服务，仅输出计数，不输出文件路径与正文。此工具不替代 UI 验证，按需运行。

@@ -20,7 +20,7 @@ impl Workspace {
                                 .as_ref()
                                 .is_some_and(WorkspaceWatch::take_changed)
                         {
-                            view.refresh(window, cx);
+                            view.refresh_with_scan_notice(false, window, cx);
                         }
                     })
                     .is_err()
@@ -57,7 +57,28 @@ impl Workspace {
             });
         }));
     }
+    pub(super) fn report_scan_warning(&mut self, warning: Option<String>, show_notice: bool) {
+        if let Some(warning) = warning
+            && show_notice
+            && self.last_scan_warning.as_ref() != Some(&warning)
+            && self.error.is_none()
+        {
+            // Discovery warnings never replace failures from explicit operations.
+            self.error = Some(warning.clone().into());
+            self.last_scan_warning = Some(warning);
+        }
+    }
+
     pub(super) fn refresh(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.refresh_with_scan_notice(true, window, cx);
+    }
+
+    fn refresh_with_scan_notice(
+        &mut self,
+        show_notice: bool,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         if self.refresh_task.is_some() || self.repository_task.is_some() || self.is_saving() {
             return;
         }
@@ -65,7 +86,7 @@ impl Workspace {
         let targets = self
             .tabs
             .iter()
-            .filter(|r| !r.historical)
+            .filter(|r| !r.historical && r.snapshot != "native-preview")
             .map(|r| (r.path.clone(), r.diff.clone(), r.repository_root.clone()))
             .collect::<Vec<_>>();
         if let Some(explorer) = &self.explorer {
@@ -95,10 +116,9 @@ impl Workspace {
             let (repos, contents) = read.await;
             let _ = view.update_in(cx, |view, window, cx| {
                 view.refresh_task = None;
-                if let Ok(repos) = repos
-                    && let Some(changes) = &view.changes
-                {
-                    changes.update(cx, |v, cx| v.set_repositories(repos, cx));
+                view.report_scan_warning(repos.warning(), show_notice);
+                if let Some(changes) = &view.changes {
+                    changes.update(cx, |v, cx| v.set_repositories(repos.repositories, cx));
                 }
                 for (path, scope, content) in contents {
                     let Some(index) = view.tabs.iter().position(|r| {
@@ -114,10 +134,11 @@ impl Workspace {
                         Content::File(d) => view.tabs[index].snapshot == d.text,
                         Content::Image(d) => view.tabs[index].snapshot == d.fingerprint,
                         Content::Diff(d, _) => view.tabs[index].snapshot == d.patch,
-                        Content::Bytes(d) | Content::Commit(d) => {
+                        Content::Bytes(d) | Content::Commit(d, _) => {
                             view.tabs[index].snapshot == d.text
                         }
                         Content::Page(d) => view.tabs[index].snapshot == d.fingerprint(),
+                        Content::Native(..) => view.tabs[index].snapshot == "native-preview",
                         Content::Unavailable(_, _) => false,
                     };
                     if unchanged && !view.tabs[index].is_unavailable() {

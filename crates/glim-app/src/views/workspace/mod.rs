@@ -1,4 +1,5 @@
 mod editing;
+mod gestures;
 mod git;
 mod header;
 mod loading;
@@ -23,6 +24,7 @@ pub struct Workspace {
     history: Vec<header::Target>,
     history_cursor: Option<usize>,
     navigating: bool,
+    history_swipe: Option<gestures::HistorySwipe>,
     search: Entity<InputState>,
     sidebar_visible: bool,
     word_wrap: bool,
@@ -46,6 +48,7 @@ pub struct Workspace {
     active: Option<usize>,
     tab_scroll: ScrollHandle,
     error: Option<SharedString>,
+    last_scan_warning: Option<String>,
     loading: bool,
     load_task: Option<Task<()>>,
     picker_task: Option<Task<()>>,
@@ -85,7 +88,8 @@ impl Workspace {
             history: Vec::new(),
             history_cursor: None,
             navigating: false,
-            sidebar_visible: true,
+            history_swipe: None,
+            sidebar_visible: false,
             word_wrap: cx
                 .try_global::<crate::app::ReaderPreferences>()
                 .is_some_and(|p| p.word_wrap),
@@ -111,6 +115,7 @@ impl Workspace {
             active: None,
             tab_scroll: ScrollHandle::new(),
             error: None,
+            last_scan_warning: None,
             loading: false,
             load_task: None,
             picker_task: None,

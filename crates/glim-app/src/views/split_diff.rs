@@ -38,6 +38,13 @@ impl ScrollSync {
 }
 
 impl SplitDiff {
+    pub fn horizontal_offsets(&self, cx: &App) -> Vec<Pixels> {
+        vec![
+            self.left.read(cx).scroll_offset().x,
+            self.right.read(cx).scroll_offset().x,
+        ]
+    }
+
     pub fn set_word_wrap(&self, enabled: bool, window: &mut Window, cx: &mut Context<Self>) {
         for editor in [&self.left, &self.right] {
             editor.update(cx, |s, cx| s.set_soft_wrap(enabled, window, cx));
@@ -142,7 +149,8 @@ impl Render for SplitDiff {
                     .enumerate()
                     .map(|(index, (label, state))| {
                         let view = cx.entity().downgrade();
-                        let menu_state = state.clone();
+                        let menu_copyable =
+                            state.read(cx).context_menu_capabilities().is_copyable();
                         v_flex()
                             .id(("diff-pane", index))
                             .relative()
@@ -194,8 +202,8 @@ impl Render for SplitDiff {
                             .child(
                                 div().flex_1().min_h_0().w_full().child(
                                     Editor::new(&state)
-                                        .context_menu(move |menu, _, cx| {
-                                            super::reader::editor_menu(menu, &menu_state, cx)
+                                        .context_menu(move |menu, _, _| {
+                                            super::reader::editor_menu(menu, false, menu_copyable)
                                         })
                                         .readonly(true)
                                         .appearance(false)

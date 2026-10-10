@@ -1,13 +1,15 @@
 mod diff;
+mod json;
 mod lexical;
-mod markdown;
+mod markup;
 mod media;
+mod native;
 mod paged;
 mod source;
 use diff::DiffReader;
 use glim_core::{DiffDocument, Document, DocumentKind, language_for_path};
 use gpui_kit::*;
-use markdown::MarkdownReader;
+use markup::MarkupReader;
 use media::{ImageReader, UnavailableReader};
 use source::SourceReader;
 use std::{path::PathBuf, sync::Arc};
@@ -15,20 +17,15 @@ use std::{path::PathBuf, sync::Arc};
 /// Keep native text editing actions without the toolkit's unused LSP entries.
 pub(super) fn editor_menu(
     menu: gpui_kit::component::native_menu::NativeMenu,
-    state: &Entity<gpui_kit::component::input::EditorState>,
-    cx: &App,
+    editable: bool,
+    copyable: bool,
 ) -> gpui_kit::component::native_menu::NativeMenu {
     use gpui_kit::component::input::{Copy, Cut, Paste, SelectAll};
-    let capabilities = state.read(cx).context_menu_capabilities();
-    menu.menu_with_disabled(
-        "Cut",
-        !(capabilities.is_editable() && capabilities.is_copyable()),
-        Box::new(Cut),
-    )
-    .menu_with_disabled("Copy", !capabilities.is_copyable(), Box::new(Copy))
-    .menu_with_disabled("Paste", !capabilities.is_editable(), Box::new(Paste))
-    .separator()
-    .menu("Select All", Box::new(SelectAll))
+    menu.menu_with_disabled("Cut", !(editable && copyable), Box::new(Cut))
+        .menu_with_disabled("Copy", !copyable, Box::new(Copy))
+        .menu_with_disabled("Paste", !editable, Box::new(Paste))
+        .separator()
+        .menu("Select All", Box::new(SelectAll))
 }
 
 pub type OpenLink = Arc<dyn Fn(PathBuf, Option<String>, &mut Window, &mut App) + Send + Sync>;
@@ -40,9 +37,10 @@ enum Renderer {
     Source(SourceReader),
     Paged(Entity<paged::PagedReader>),
     Bytes(SourceReader),
-    Markdown(MarkdownReader),
+    Markup(MarkupReader),
     Diff(DiffReader),
     Image(ImageReader),
+    Native(Entity<native::NativeReader>),
     Unavailable(UnavailableReader),
 }
 pub struct Reader {
@@ -53,12 +51,19 @@ pub struct Reader {
     pub diff: Option<glim_core::GitChange>,
     pub historical: bool,
     pub commit_id: Option<String>,
+    pub commit_file: Option<PathBuf>,
+    json: Option<(Entity<json::JsonTree>, bool)>,
     renderer: Renderer,
 }
 impl Reader {
     pub fn new(document: Document, window: &mut Window, cx: &mut App) -> Self {
-        let renderer = if document.kind == DocumentKind::Markdown {
-            Renderer::Markdown(MarkdownReader::new(
+        let html = document
+            .path
+            .extension()
+            .and_then(|s| s.to_str())
+            .is_some_and(|s| s.eq_ignore_ascii_case("html") || s.eq_ignore_ascii_case("htm"));
+        let renderer = if document.kind == DocumentKind::Markdown || html {
+            Renderer::Markup(MarkupReader::new(
                 &document.path,
                 &document.text,
                 window,
@@ -75,6 +80,8 @@ impl Reader {
                 cx,
             ))
         };
+        let json = (language_for_path(&document.path) == "json")
+            .then(|| (cx.new(|_| json::JsonTree::new()), false));
         Self {
             title: document.path.display().to_string().into(),
             path: document.path,
@@ -83,9 +90,28 @@ impl Reader {
             diff: None,
             historical: false,
             commit_id: None,
+            commit_file: None,
+            json,
             renderer,
         }
     }
+    pub fn from_native(path: PathBuf, folder: bool, shuffle: bool, cx: &mut App) -> Self {
+        Self {
+            repository_root: None,
+            snapshot: "native-preview".into(),
+            title: path.display().to_string().into(),
+            path: path.clone(),
+            diff: None,
+            historical: false,
+            commit_id: None,
+            commit_file: None,
+            json: None,
+            renderer: Renderer::Native(
+                cx.new(|cx| native::NativeReader::new(path, folder, shuffle, cx)),
+            ),
+        }
+    }
+
     pub fn from_page(page: glim_services::paged::TextPage, cx: &mut App) -> Self {
         Self {
             title: page.path.display().to_string().into(),
@@ -95,19 +121,31 @@ impl Reader {
             diff: None,
             historical: false,
             commit_id: None,
+            commit_file: None,
+            json: None,
             renderer: Renderer::Paged(cx.new(|_| paged::PagedReader::new(page))),
         }
     }
-    pub fn from_commit(path: PathBuf, text: String, window: &mut Window, cx: &mut App) -> Self {
+    pub fn from_commit(
+        path: PathBuf,
+        text: String,
+        commit_file: Option<PathBuf>,
+        window: &mut Window,
+        cx: &mut App,
+    ) -> Self {
+        let (content, spans) = glim_core::commit_content(&text);
         let source = SourceReader::new(
-            &text,
-            "diff",
+            &content,
+            "plain",
             true,
-            Vec::new(),
+            spans,
             ScrollHandle::new(),
             window,
             cx,
         );
+        let split = glim_core::split_diff::split_commit_patch(&text)
+            .map(|patch| cx.new(|cx| crate::views::split_diff::SplitDiff::new(patch, window, cx)));
+        let side_by_side = commit_file.is_some() && split.is_some();
         let root = path.parent().map(ToOwned::to_owned);
         let commit_id = path
             .file_name()
@@ -115,14 +153,32 @@ impl Reader {
             .and_then(|n| n.strip_prefix("Commit "))
             .map(str::to_owned);
         Self {
-            title: path.display().to_string().into(),
+            title: commit_file
+                .as_ref()
+                .map_or_else(
+                    || path.display().to_string(),
+                    |file| {
+                        format!(
+                            "{} · {}",
+                            file.display(),
+                            path.file_name().unwrap_or_default().to_string_lossy()
+                        )
+                    },
+                )
+                .into(),
             path,
             snapshot: text,
             repository_root: root,
             diff: None,
             historical: true,
             commit_id,
-            renderer: Renderer::Bytes(source),
+            commit_file,
+            json: None,
+            renderer: Renderer::Diff(DiffReader {
+                source,
+                split,
+                side_by_side,
+            }),
         }
     }
     pub fn from_bytes(
@@ -147,6 +203,8 @@ impl Reader {
             diff: None,
             historical: false,
             commit_id: None,
+            commit_file: None,
+            json: None,
             renderer: Renderer::Bytes(source),
         }
     }
@@ -170,6 +228,8 @@ impl Reader {
             diff: Some(document.change),
             historical: false,
             commit_id: None,
+            commit_file: None,
+            json: None,
             renderer,
         }
     }
@@ -186,6 +246,8 @@ impl Reader {
             diff: None,
             historical: false,
             commit_id: None,
+            commit_file: None,
+            json: None,
             renderer: Renderer::Image(ImageReader(Arc::new(Image::from_bytes(
                 ImageFormat::Png,
                 document.png,
@@ -202,6 +264,8 @@ impl Reader {
             diff: None,
             historical: false,
             commit_id: None,
+            commit_file: None,
+            json: None,
             renderer,
         }
     }
@@ -211,7 +275,7 @@ impl Reader {
     fn source(&self) -> Option<&SourceReader> {
         match &self.renderer {
             Renderer::Source(s) | Renderer::Bytes(s) => Some(s),
-            Renderer::Markdown(m) => Some(&m.source),
+            Renderer::Markup(m) => Some(&m.source),
             Renderer::Diff(d) => Some(&d.source),
             _ => None,
         }
@@ -222,21 +286,21 @@ impl Reader {
         }
         match &self.renderer {
             Renderer::Source(s) => Some(s.state.clone()),
-            Renderer::Markdown(m) => Some(m.source.state.clone()),
+            Renderer::Markup(m) => Some(m.source.state.clone()),
             _ => None,
         }
     }
     pub fn set_editing_locked(&mut self, locked: bool, cx: &mut App) {
         match &mut self.renderer {
             Renderer::Source(s) => s.set_locked(locked, cx),
-            Renderer::Markdown(m) => m.source.set_locked(locked, cx),
+            Renderer::Markup(m) => m.source.set_locked(locked, cx),
             _ => {}
         }
     }
     pub fn is_dirty(&self) -> bool {
         match &self.renderer {
             Renderer::Source(s) => s.is_dirty(),
-            Renderer::Markdown(m) => m.source.is_dirty(),
+            Renderer::Markup(m) => m.source.is_dirty(),
             _ => false,
         }
     }
@@ -244,15 +308,18 @@ impl Reader {
         self.snapshot = text.clone();
         match &mut self.renderer {
             Renderer::Source(s) => s.mark_saved(text, cx),
-            Renderer::Markdown(m) => m.source.mark_saved(text, cx),
+            Renderer::Markup(m) => m.source.mark_saved(text, cx),
             _ => {}
         }
     }
     pub fn inherit_view(&mut self, old: &Self, cx: &mut App) {
+        if old.json.as_ref().is_some_and(|(_, visible)| *visible) {
+            self.set_preview(true, cx);
+        }
         match (&mut self.renderer, &old.renderer) {
             (Renderer::Source(s), Renderer::Source(o))
             | (Renderer::Bytes(s), Renderer::Bytes(o)) => s.inherit(o, cx),
-            (Renderer::Markdown(s), Renderer::Markdown(o)) => {
+            (Renderer::Markup(s), Renderer::Markup(o)) => {
                 s.source.inherit(&o.source, cx);
                 s.preview = o.preview;
                 s.scroll.set_offset(o.scroll.offset());
@@ -281,16 +348,80 @@ impl Reader {
         }
     }
 
+    pub fn horizontal_offsets(&self, cx: &App) -> Option<Vec<Pixels>> {
+        if self.json.as_ref().is_some_and(|(_, visible)| *visible) {
+            return Some(Vec::new());
+        }
+        match &self.renderer {
+            Renderer::Paged(_) => None,
+            Renderer::Markup(m) if m.preview => Some(vec![m.scroll.offset().x]),
+            Renderer::Diff(d) if d.side_by_side => {
+                d.split.as_ref().map(|s| s.read(cx).horizontal_offsets(cx))
+            }
+            _ => Some(
+                self.source()
+                    .map(|s| vec![s.state.read(cx).scroll_offset().x])
+                    .unwrap_or_default(),
+            ),
+        }
+    }
+
     pub fn focus_source(&self, window: &mut Window, cx: &mut App) {
         if let Some(source) = self.source() {
             source.state.update(cx, |s, cx| s.focus(window, cx));
         }
     }
+    pub fn history_summary(&self) -> Option<(String, String)> {
+        if !self.historical {
+            return None;
+        }
+        let header = self.snapshot.split("\ndiff --git ").next().unwrap_or("");
+        let subject = header
+            .lines()
+            .find_map(|line| {
+                line.strip_prefix("    ")
+                    .filter(|line| !line.trim().is_empty())
+            })
+            .unwrap_or("Commit changes");
+        let author = header
+            .lines()
+            .find_map(|line| line.strip_prefix("Author:"))
+            .map(|author| author.trim().split(" <").next().unwrap_or(author))
+            .unwrap_or("");
+        let id = self.commit_id.as_deref().unwrap_or("");
+        Some((
+            subject.to_owned(),
+            format!("{} · {}", author, &id[..8.min(id.len())]),
+        ))
+    }
+
+    pub fn is_json(&self) -> bool {
+        self.json.is_some()
+    }
+    pub fn preview_preference(&self) -> Option<&'static str> {
+        match &self.renderer {
+            Renderer::Markup(m) => Some(if m.html { "html" } else { "markdown" }),
+            _ => None,
+        }
+    }
     pub fn can_preview(&self) -> bool {
-        matches!(self.renderer, Renderer::Markdown(_))
+        self.json.is_some() || matches!(self.renderer, Renderer::Markup(_))
     }
     pub fn set_preview(&mut self, preview: bool, cx: &mut App) {
-        if let Renderer::Markdown(m) = &mut self.renderer {
+        if self.json.is_some() {
+            let text = if preview {
+                self.source().map(|s| s.state.read(cx).value().to_string())
+            } else {
+                None
+            };
+            if let Some((tree, visible)) = &mut self.json {
+                *visible = preview;
+                if let Some(text) = text {
+                    tree.update(cx, |v, cx| v.load(text, cx));
+                }
+            }
+        }
+        if let Renderer::Markup(m) = &mut self.renderer {
             if preview {
                 m.sync_preview(cx);
             }
@@ -298,7 +429,9 @@ impl Reader {
         }
     }
     pub fn toggle_label(&self) -> &'static str {
-        if matches!(&self.renderer, Renderer::Markdown(m) if m.preview) {
+        if self.json.as_ref().is_some_and(|(_, visible)| *visible)
+            || matches!(&self.renderer, Renderer::Markup(m) if m.preview)
+        {
             "Source"
         } else {
             "Preview"
@@ -316,7 +449,7 @@ impl Reader {
         }
     }
     pub fn reveal_anchor(&mut self, anchor: &str, cx: &mut App) {
-        if let Renderer::Markdown(m) = &mut self.renderer {
+        if let Renderer::Markup(m) = &mut self.renderer {
             m.sync_preview(cx);
             m.reveal(anchor);
         } else if let Some(source) = self.source()
@@ -332,11 +465,15 @@ impl Reader {
         }
     }
     pub fn render(&mut self, open: OpenLink, cx: &mut App) -> AnyElement {
+        if let Some((tree, true)) = &self.json {
+            return tree.clone().into_any_element();
+        }
         match &mut self.renderer {
             Renderer::Source(s) | Renderer::Bytes(s) => s.render(cx),
-            Renderer::Markdown(m) => m.render(open, cx),
+            Renderer::Markup(m) => m.render(open, cx),
             Renderer::Diff(d) => d.render(cx),
             Renderer::Image(i) => i.render(),
+            Renderer::Native(n) => n.clone().into_any_element(),
             Renderer::Paged(p) => p.clone().into_any_element(),
             Renderer::Unavailable(e) => e.render(cx),
         }
@@ -379,6 +516,36 @@ mod editing_tests {
         })
     }
     #[gpui_kit::test]
+    fn source_right_click_does_not_reborrow_editor(cx: &mut TestAppContext) {
+        for (name, kind) in [
+            ("test.rs", DocumentKind::Text),
+            ("test.md", DocumentKind::Markdown),
+            ("test.html", DocumentKind::Text),
+        ] {
+            let (handle, view) = open(cx, |window, cx| {
+                let mut reader = Reader::new(
+                    Document {
+                        path: std::path::Path::new("/tmp").join(name),
+                        kind,
+                        text: "Sample text\n".into(),
+                    },
+                    window,
+                    cx,
+                );
+                reader.set_preview(false, cx);
+                reader
+            });
+            let editor = cx.update(|cx| view.read(cx).0.editor().unwrap());
+            cx.update_window(handle, |_, window, cx| {
+                window.render_frame(cx);
+                window.right_click(("input", editor.entity_id()), cx);
+            })
+            .unwrap();
+            cx.run_until_parked();
+        }
+    }
+
+    #[gpui_kit::test]
     fn markdown_preview_uses_unsaved_edits(cx: &mut TestAppContext) {
         let (handle, view) = open(cx, |window, cx| {
             let mut reader = Reader::new(
@@ -406,7 +573,7 @@ mod editing_tests {
         cx.update(|cx| view.update(cx, |v, cx| v.0.set_preview(true, cx)));
         cx.run_until_parked();
         cx.update(|cx| {
-            let Renderer::Markdown(markdown) = &view.read(cx).0.renderer else {
+            let Renderer::Markup(markdown) = &view.read(cx).0.renderer else {
                 unreachable!()
             };
             assert_eq!(
@@ -477,6 +644,7 @@ mod editing_tests {
         let original = cx.update(|cx| editor.read(cx).value());
         cx.update_window(handle, |_, window, cx| {
             window.render_frame(cx);
+            window.right_click(("input", editor.entity_id()), cx);
             window.click(("input", editor.entity_id()), cx);
             window.press("cmd-a", cx);
             window.input("must not replace the diff", cx);

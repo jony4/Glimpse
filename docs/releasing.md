@@ -1,41 +1,42 @@
-# macOS releases
+# 构建与发布
 
-The first distribution target is Apple Silicon (`aarch64-apple-darwin` / arm64).
+目标平台：macOS Apple Silicon（`aarch64-apple-darwin`）。需要 Rust、Apple Command Line Tools（包含 Swift 编译器）和 Python 3；Git 功能使用本机 Git。
 
-## Build
+## 开发
 
-On macOS, install Rust with the target's standard library, Apple Command Line Tools and Python 3. Keep the workspace package version and `CFBundleShortVersionString` in `assets/macos/Info.plist` equal; increase `CFBundleVersion` for subsequent builds.
+```sh
+cargo run --locked -- /path/to/project
+```
+
+按需验证，不将历史运行结果作为当前代码已通过的证据：
 
 ```sh
 cargo fmt --all --check
 cargo clippy --workspace --all-targets --locked -- -D warnings
 cargo test --workspace --locked
 cargo build --locked
+```
+
+## 打包
+
+保持 Cargo workspace 版本与 `assets/macos/Info.plist` 的 `CFBundleShortVersionString` 一致，新发布递增 `CFBundleVersion`。
+
+```sh
+scripts/bundle-macos.sh release
 scripts/package-dmg.sh
 ```
 
-The script builds with the release profile and an explicit ARM target, validates the bundle version and architecture, applies an ad-hoc signature, and creates a compressed, verified DMG. It uses temporary staging, includes an Applications shortcut and installation notes, and writes a SHA-256 sidecar.
+应用打包输出 `dist/Glim.app`；DMG 脚本输出 `dist/release/Glim.app`、`dist/Glim-<version>-macos-arm64.dmg` 及同名 `.sha256` 文件。脚本检查架构、版本与签名，并校验磁盘映像。`GLIM_BUNDLE_DIR` 可覆盖应用输出路径，兼容旧 `GLIMPSE_BUNDLE_DIR`。
 
-Outputs when packaging the current source (version 0.1.3):
+`target/` 和 `dist/` 是忽略的构建缓存与产物，不提交到 Git。正常构建使用现有图标，无需 Node.js。
 
-- `dist/release/Glim.app`
-- `dist/Glim-0.1.3-macos-arm64.dmg`
-- `dist/Glim-0.1.3-macos-arm64.dmg.sha256`
+## 安装与发布
 
-The release directory is separate from the development bundle. Builds do not restart an existing Glim instance. Normal packaging needs no Node.js and uses the checked-in artwork.
+1. 校验 DMG 的 SHA-256、只读挂载内容、ARM64 架构与签名。
+2. 正常退出旧应用，保留可恢复备份后安装至 `/Applications/Glim.app`，确认安装内容一致并启动。
+3. 验证本次改动涉及的界面行为；无法覆盖的交互在 Release 说明中明确列出。
+4. 提交最终源码、推送版本标签，向 [GitHub Releases](https://github.com/jony4/Glim/releases) 上传 DMG 与校验文件；确认发布状态及远端校验值。
 
-The existing published 0.1.2 artifacts retain the former Glimpse name. These Glim filenames describe future local packaging, not an already published replacement. `GLIM_BUNDLE_DIR` overrides the development bundle path; the legacy `GLIMPSE_BUNDLE_DIR` remains a fallback. The bundle identifier is retained for macOS identity continuity.
+发布说明保留在 GitHub Release，源码历史由 Git 保存。仓库文档只维护当前状态和未完成事项，不积累逐次操作或验证流水。
 
-## Verify and publish
-
-Mount the DMG read-only, verify the bundled executable is arm64 and that its signature is intact, confirm the Applications shortcut, and install and launch the verified bundle for a smoke check without renaming Glim. Verify the checksum from `dist`:
-
-```sh
-shasum -a 256 -c Glim-0.1.3-macos-arm64.dmg.sha256
-```
-
-Commit and push the source, create an annotated `v0.1.3` tag at that commit, and publish a GitHub Release with both artifacts. Include the tested capabilities, platform and signing status in the release notes.
-
-## Signing
-
-Version 0.1.3 is ad-hoc signed, without Developer ID signing or Apple notarization. This checks local bundle integrity but does not establish publisher trust. Gatekeeper can require explicit approval in System Settings → Privacy & Security. A Developer ID certificate and notarization credentials are needed for a trusted distribution pipeline; they are not included in the repository.
+应用目前使用 ad-hoc 签名，尚无 Developer ID 签名与公证；首次启动放行步骤见 [README](../README.md#首次打开被-macos-拦截)。

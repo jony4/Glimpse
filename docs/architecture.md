@@ -1,167 +1,75 @@
-# 架构约定
+# 架构
 
-Glim 是 macOS 查看器，负责 Markdown、代码、图片和 Git diff 阅读。普通 UTF-8 文件支持基础编辑、自动保存和手动保存，Diff/图片仍只读；支持显式暂存/移出暂存，以及提交消息框的 ⌘Enter；提交仅包含 index，不提供克隆。
+Glim 是原生 macOS 全能查看器。代码、文档、图片、Git 差异及模型元数据共用工作台；普通 UTF-8 文本支持基础编辑，历史、差异和非文本预览保持只读。
+
+## 目录与依赖
 
 ```text
-glim-app ──────> glim-services ──────> glim-core
-     └──────────────────────────────────> glim-core
+crates/
+  glim-core/src/       文档与 Git 数据模型、diff 解析、历史图布局；无 I/O 和 GPUI
+  glim-services/src/   文件、目录、Git、监听、格式解析；无 UI
+  glim-app/src/
+    app/              启动、动作、菜单、语言注册、内嵌资源
+    views/
+      workspace/      窗口、标签、导航、保存、后台任务与布局
+      changes/        Git 仓库操作、变更树与 Graph
+      reader/         源码、Markdown、JSON 树、图片、分页及 diff
+      explorer.rs     按需展开的目录树
+      split_diff.rs   双栏差异及同步滚动
+      minimap.rs      文档缩略图
+native/               PDFKit / AVKit / Quick Look 原生预览辅助程序
+assets/               品牌、文件图标、高亮查询、导航图标、macOS 包配置
+scripts/              应用打包、DMG 发布、可选图标生成
 ```
 
-## 职责
+依赖方向：`glim-app → glim-services → glim-core`，app 也可直接依赖 core。GPUI Kit 固定版本，保留 Cargo.lock。文件读写、扫描和 Git 命令通过后台执行器运行；render 只组合已有状态，实体与任务句柄由所属视图持有。
 
-- `glim-core`：文档、路径对应的语言、目录项、仓库和变更范围模型，以及 unified/combined patch 中变更行的 UTF-8 字节范围。无 GPUI 或 I/O 依赖。
-- `glim-services`：`files` 读取有限大小的 UTF-8 文本；`workspace` 按层读取目录；`git` 识别仓库、读取状态和 patch，并提供显式批量暂存/移出暂存与提交；`media` 在后台有限解码图片、将 SVG 栅格化为 PNG；`watch` 管理原生文件监听。阻塞 API 只从后台任务调用。
-- `glim-app`：组合服务和 GPUI；`app` 管理启动、菜单、动作和内嵌资源；`views/workspace` 管理窗口状态、任务编排和整体布局；`Explorer`、`Changes`、`Reader` 分别管理三种呈现。
+## 工作台与生命周期
 
-保留具体函数和明确的模块边界，在出现多个实现需求时再引入服务 trait。
+Workspace 管理标签、Explorer / Changes 实体、历史栈、订阅与后台任务。空白启动默认收起侧栏，欢迎页按窗口居中；打开文件夹后隐藏 Open Folder。顶部右侧集中放置换行、预览/原文、View File、Inline / Side by Side 图标。
 
-## 目录树
+普通文件按路径识别，工作区 diff 加入比较范围，历史标签加入仓库、提交及文件路径。重复打开复用标签，刷新保留阅读状态，不覆盖草稿。标签右键提供关闭当前、右侧、其他或全部；批量关闭按文档身份固定目标，统一确认未保存内容，保留仍存在的活动标签。标签标题不使用带焦点边框的按钮。旧任务结果不覆盖新选择；已运行的同步 I/O 可能继续完成，但不再安装其结果。
 
-只读取当前目录的直接子项，展开子目录时启动后台任务。缓存已经访问的目录；折叠不丢弃缓存。`ignore` 处理 ignore 规则，显示未被忽略的点文件，隐藏 `.git`，不递归跟随软链接。可见行由展开状态生成，使用 GPUI uniform_list 虚拟渲染。每个目录持有独立任务句柄，失败显示错误且可重试。
+文件监听合并事件后后台刷新。单文件监听父目录，linked worktree 同时监听 Git 元数据。手势模块使用现有历史栈：原生导航事件及快速双指横滑可前进/后退；横向内容滚动优先，分页文本不启用滚动手势回退。
 
-点击文件或键盘 Enter 发出 `ExplorerEvent::OpenFile`，窗口层读取文件。状态模型不包含 UI 颜色或 GPUI 类型。
+## 读取与编辑
 
-## Git 比较语义
+SourceReader 持有长期 EditorState，支持基础输入、选择、撤销/重做、搜索和折叠。Tree-sitter 与主题负责源码着色；缺少完整 grammar 的配置和模板使用可见行词法着色，不引入 LSP。
 
-`git rev-parse --show-toplevel` 从任意子目录发现仓库，支持 `.git` 为文件的 linked worktree。非 Git 目录照常浏览；Git 不可用或读取失败时显示提示。
+自动保存按文件串行排队，停止输入约 800 ms 后触发，保留 ⌘S。写入前比较磁盘基线，冲突保留草稿；原子替换使用同目录临时文件。关闭、退出或替换工作区时处理未保存内容。保存比较使用固定缓冲区，只读视图不保留编辑基线。
 
-解析 `git status --porcelain=v1 -z`，保留空格、换行与原始路径字节。暂存和工作区修改是独立记录；冲突单独标识，重命名保留源路径。Changes 显示整个仓库的状态。
+`reader/markup` 通过 TextView 的 HTML / Markdown 解析器排版，预览与源码共享内容，处理相对图片和本地链接。HTML 预览用于静态文档阅读，不提供浏览器脚本运行环境。两种格式默认预览，用户的模式选择按格式独立保存到偏好目录；刷新保留标签模式，新打开文件读取当前偏好。偏好写入由应用共享任务串行执行，防止快速切换时旧值覆盖新值。JSON 树使用独立实体，切换时读取当前编辑器快照并后台解析；虚拟列表只投影展开节点，源码始终可访问。
 
-- Staged：`git diff --cached`，比较 HEAD 和 index；没有首个提交时也可读取。
-- Unstaged：`git diff`，比较 index 和工作区。
-- Untracked：`git diff --no-index /dev/null <file>`，接受退出码 1 表示差异。
-- Conflict：`git diff --cc`，显示 Git 的 combined patch，不进行合并或解决冲突。
+文本、图片、JSON 树及模型预览分别限制输入或展示规模；具体数值见[格式与限制](file-format-support.md)。分页替换旧页，不累计全文件；预算按标签计算。
 
-通过 `Command` 参数调用，不使用 shell 字符串。强制字面 pathspec，禁用 pager、external diff、textconv、fsmonitor 和可选 index 锁；清理可能覆盖工作目录的 Git 环境变量。stdout 有 8 MiB 上限，stderr 独立读取；超限终止子进程并返回明确错误。UI 通过明确的文件/目录/分组按钮更新 index，提交消息框执行 commit。提交只包含 index，保留 hooks 和签名配置；不提供 checkout 或冲突解决。
+## 文档与媒体
 
-`core/split_diff` 将普通 unified patch 对齐为 Before/After 两列，保留原行号并补齐缺失行。`views/split_diff` 持有两侧编辑器和装饰，纵向滚动同步。普通 patch 默认双栏，Inline 仅展示 hunk 内容及增删标记；combined conflict patch 回退 Inline。
+`native/Preview.swift` 使用 PDFKit、AVKit 和 Quick Look 提供独立原生窗口；`glim-services/build.rs` 在 macOS 构建时通过 xcrun/Swift 编译对应目标架构，将辅助程序内嵌到 Rust 二进制。正常运行不再调用编译器。`services/preview` 在后台验证文件、枚举有界队列、写入临时清单并启动辅助程序；临时目录保留到预览窗口退出。`reader/native` 保留任务与取消标记，标签关闭时结束辅助进程，播放不进入文本编辑/刷新流程。Office 格式通过 Quick Look 异步渲染，不在 Rust 中解压或解析文档；原生窗口提供默认应用打开入口作为复杂文档的备用方式。
 
-## 生命周期
+Explorer 根据已加载目录内容显示播放菜单；未展开的目录按需尝试读取队列，空目录返回明确提示。顺序/随机播放仅处理直接子文件，按自然文件名排序或打乱队列；解码交给系统。纯音频在 AVKit 控件下显示封面、标题、歌手、专辑与渐变背景，无封面时绘制唱片。元数据异步读取，切歌取消旧请求并校验播放项；封面数据最多 8 MiB，解码为最长 600px 缩略图。视频隐藏该背景。所有菜单构建只读缓存。Files 的添加文件夹菜单绑定到末行下方的独立空白区域，不包裹文件/目录行；行级菜单与空白菜单不存在嵌套关系。
 
-Workspace 持有 Reader 标签列表、当前标签索引、标签栏滚动句柄、Explorer / Changes 实体、事件订阅、文件选择器任务和当前加载任务。新的读取替换旧任务，旧结果不能覆盖新选择；后台结果通过弱实体引用返回窗口。正在运行的同步 I/O 可能继续完成，但其结果不再被安装。
+## 目录与仓库发现
 
-Reader 持有长期存在的 EditorState，render 不新建编辑器、不做 I/O。普通文件在 state 与 renderer 两层启用基础编辑；diff 两层均只读。代码语言按扩展名映射，按需开启 Tree-sitter grammar，不接 LSP。Markdown 用 Kit 的 Base TextView（Component 初始化安装主题和代码块高亮），并把相对图片 URL 解析为本地路径。
+目录树只读取直接子项，展开时加载并缓存；遵循 ignore 规则、隐藏 `.git`，不递归跟随软链接。
 
-`workspace/updates` 持有 native notify watcher，500 ms 合并事件，后台刷新目录缓存、仓库状态和所有打开标签；仅替换内容改变的 Reader，保留目录展开、阅读模式与滚动位置。单文件打开监听其父目录以覆盖原子替换，linked worktree 同时监听 Git 元数据目录。Git 写入期间延后自动刷新，完成后显式刷新。会话恢复尚未实现。
+仓库发现在后台遍历所有工作区根目录，无时间、深度、条目数或仓库数截断；保留 ignore 规则以及生成目录排除。从主目录等上层位置自动发现时跳过 macOS Library 与废纸篓；明确打开这些目录或其子目录时仍扫描所选范围。`RepositoryScan` 返回可用仓库和有界诊断：单个路径失败不终止其他路径；普通子目录的权限、超时和已消失路径跳过，指定根目录及仓库操作失败仍报告并按路径去重。结果在遍历结束后交付。系统超时不无限重试。文件监听触发的后台刷新不弹扫描警告；首次打开和手动刷新按相同提示去重，关闭后不因后台刷新再次出现，也不覆盖用户操作的错误。切换工作区后重置去重状态。
 
-## 品牌与构建
+## Git 操作与比较
 
-Logo 的 SVG 源文件在 `assets/branding`，PNG 内嵌于二进制用于欢迎页，ICNS 用于 app bundle。`scripts/render-icons.mjs` 是可选的图标生成工具；正常构建只使用版本控制内的资源，不需要 Node.js。
+Git 通过参数数组执行，不拼接 shell；路径使用 literal pathspec，清理影响仓库定位的环境变量，禁用 external diff、textconv、pager 和 fsmonitor。输出有界，stderr 独立排空。操作沿用本机凭据、hooks 和签名。
 
-GPUI Kit 固定版本并提交 Cargo.lock。升级需验证启动、文本选择、中文、快捷键和窗口生命周期。macOS CI 执行格式、Clippy、测试、构建；实际界面验证记录见 verification.md。
+- Staged 比较 HEAD 与 index；Unstaged 比较 index 与工作区。
+- Untracked 使用 no-index 差异；冲突使用 combined patch，回退 Inline。
+- 暂存/取消暂存显式执行；提交只包含 index。
+- 分支与远程操作从仓库行图标或 Git 右键菜单进入；分支搜索、切换、新建和重命名使用独立弹窗，弹窗订阅仓库状态更新，关闭或操作成功时收起。执行前核对 HEAD/分支；Pull 仅快进，删除分支用 `-d`，不强推或自动改写历史。
+- 修改工作区前检查各窗口草稿与保存任务，操作期间锁定应用内编辑与 Git 写操作。该锁不是对外部 Git 客户端的跨进程事务。
 
-## 工作台布局与标签
+Repositories、Changes、Graph 是同级可调高度面板。Graph 默认收起，按拓扑顺序读取提交与父提交 ID，core 计算分支通道和连接关系；展开文件时保持连线连续。接近列表底部自动增加 200 条，最多 1,000 条。分支范围位于仓库菜单。
 
-`workspace/render.rs` 组合固定宽度的活动栏、可调宽度的能力面板和右侧阅读区。Files / Git 切换只影响左侧面板。`workspace/tabs.rs` 管理标签栏、激活和关闭：文件路径与 diff 范围共同标识一个标签，重复打开复用 Reader；每个 Reader 保留自己的 EditorState、Markdown 模式和预览滚动句柄。Markdown 的内部 TextView ID 绑定编辑器实体，避免跨标签共享选择状态。关闭当前标签选择相邻标签，关闭其他标签保留当前文档，⌘W 优先关闭标签。
+单击提交展开文件，双击打开完整历史；点击文件打开单文件历史，重命名保留两侧路径。合并提交比较第一父提交。历史摘要在正文外仅展示一次，diff 不包含原始 Git 元信息。完整历史默认 Inline，单文件默认双栏，两者可切换；双栏按原行号对齐并同步纵向滚动。
 
-`views/minimap.rs` 缓存每行的文本宽度/缩进，按可见高度采样绘制文档轮廓；diff 增删行带颜色。源码使用 EditorState 的实际行高、可见行范围和滚动接口联动，Markdown 预览按渲染内容总高度映射滚动比例（缩略图表示源码结构，不是渲染页面的像素截图）。点击与拖动都能定位。GPUI Kit 的内置源码垂直滚动条位于文本内侧，Reader 遮盖该轨道，由 minimap 在最外侧绘制并驱动垂直轨道；横向滚动仍由编辑器管理。所有滚动与缩略图状态均属于单个 Reader。
+## 品牌与偏好
 
-## Source Control 树与导航
+应用包为 `Glim.app`，可执行文件为 `glim`。为延续 macOS 应用身份，bundle identifier 保留 `io.github.jony4.glimpse`。换行偏好写入 `~/Library/Application Support/Glim`，新文件不存在时兼容读取旧 Glimpse 目录。
 
-`views/changes/tree.rs` 仅投影为 Staged Changes / Changes 两组，再建立目录层级；Changes 合并 Worktree、Untracked、Conflict，原始 GitChange scope 不变，用于正确读取 patch，再按每层目录在前、文件在后投影可见行。折叠键含 scope，避免同一路径在不同分组互相影响。目录/文件行使用固定行高、明确左对齐和统一缩进；长名称省略，状态标记保留固定宽度。目录树与平铺列表共用同一虚拟列表。
-
-`workspace/header` 管理历史和带 150 ms 防抖的工作区路径搜索，Clone UI 和服务已移除。每个仓库保留独立提交草稿。
-
-`Reader` 的图片数据来自 `services/media`，render 不读文件；PNG/JPEG/WebP/GIF/BMP/TIFF/ICO 解码后统一 PNG，GIF 当前只显示首帧。SVG 使用 resvg，不解析外部文件资源；ICNS 读取现代 PNG 表示。输入限制 32 MiB，渲染像素限制 1600 万；位图解码限制 8192 边长和 128 MiB 分配。图片快照指纹用于监听后的变化判断。错误留在 Reader 内容区，不变成整个工作台的文件读取错误横幅。
-
-Material Icon Theme 文件图标固定上游版本，源 SVG、内嵌 PNG 和 MIT 归属在 `assets/file-icons`；活动栏使用原创细线 SVG。Dock 渲染使用略缩小的 SVG viewBox，将图案放大约 5.8%，不改欢迎页品牌尺寸。
-
-## 窗口和阅读呈现
-
-`app::open_workspace` 统一创建最大化普通窗口，File → New Window / ⌘⇧N 创建独立 Workspace；各窗口的项目、标签、监听和任务互不共享。关闭最后一个窗口才退出应用。
-
-`core::diff_content` 在纯函数中移除 patch 文件头和 hunk 头，并将高亮范围映射到显示文本；双栏同样隐藏元数据，保留真实行号，多个 hunk 用空行分隔。无文本差异和二进制变化显示简短说明。Reader 的 snapshot 始终保留原 patch 供刷新比较。
-
-行号不再通过单独 Entity 延后绘制：SourceReader 使用编辑器原生 gutter，与文本、折叠和滚动使用同一布局帧。原生折叠栏也为行号和正文提供间距。活动栏选中指示不受 Button 悬停边框覆盖。
-
-## 快速打开与紧凑侧栏
-
-`services::workspace::open_folder` 只规范化路径并读取直接子项。Workspace 先安装 Explorer，再用独立 repository_task 发现仓库、读取 Git 状态和安装监听；新目录会取消旧句柄并校验返回根目录，文件阅读不再等待 Git。仓库发现跳过普通文件，同一仓库只 inspect 一次；Watcher 不再自行发现仓库，外部 worktree 元数据由已发现仓库列表补充。
-
-仅 Files 保留根目录折叠状态；Git 不显示冗余根目录；Changes 另外保存 Repositories/Changes 折叠状态。仓库列表采用 26 px 行高和限高滚动区，选中行有主题背景与左边标记。提交消息框使用 ⌘Enter，普通 Enter 不提交；切换仓库保留独立草稿。搜索框有上下留白并禁用 focus border。Reader 遮盖内置垂直轨道时覆盖到底，避免底部出现第二个滚动条。
-
-## 具体阅读器与共享编辑器
-
-`views/reader/mod.rs` 的 Reader 仅持有标签身份、原文快照和 Renderer 枚举，按内容分派，不以多个可选字段拼凑互斥状态。具体实现为：
-
-- `source.rs`：SourceReader 管理长期 EditorState、minimap 和差异装饰；代码与 JSON 按语言启用原生语法折叠，行号随同一布局帧绘制，不改原文件文本。
-- `markdown.rs`：MarkdownReader 组合源码阅读器与持久 TextViewState、预览滚动和标题锚点。按当前文档 URL 解析相对/绝对本地链接及百分号编码；本地文件/目录通过 Workspace 的后台读取路径打开，HTTP(S)/mailto 交系统。`#标题` 与其他文档标题锚点通过解析后的 rendered range 定位，等待解析完成后再执行。
-- `diff.rs`：DiffReader 组合 Inline SourceReader 和双栏 SplitDiff；仅在差异阅读器中持有切换状态。保留原 patch 快照以便刷新比较。
-- `media.rs`：ImageReader 只保留解码图片；UnavailableReader 只保留错误与预填 Issue URL，不再创建无用 EditorState。Issue 草稿携带扩展名、版本、系统和架构，不自动附带文件正文、完整本地路径或可能含路径的错误详情，仍由用户提交。
-
-所有内容读取和 Git 命令留在 Services 后台任务中；不引入插件/trait 注册表。新格式须先确定服务端加载数据和限制，再添加实际使用的 Renderer 实现。原生横向滚动条使用统一 Hover 模式和主题淡入淡出动画，文件/Inline/双栏共用；minimap 的垂直轨道保持独立。
-
-## 搜索与目录上下文
-
-搜索结果通过 deferred 绝对定位浮层覆盖在内容上，不参与页面高度计算；点击外部或 Escape 关闭。打开搜索结果会切换 Files 并取消过时搜索任务。Markdown 本地跳转复用相同后台打开流程，并把锚点随待加载文档关联，防止旧请求定位新文档。
-
-Explorer 不设额外路径说明栏。目录展开时缓存每行的父行索引和子树结束位置；滚动时按当前布局偏移把已经离开顶部的祖先目录行绘制为吸顶行，与普通目录行复用缩进、箭头、层级竖线和点击逻辑。吸顶行覆盖原列表而不占用额外布局高度，切换到兄弟分支时旧祖先逐级退出；点击吸顶行可以收起并定位该目录。根目录只显示一次，仍可折叠。Changes 的目录/文件/组按钮选出相应 GitChange 集合，服务以字面路径批量执行，包含重命名旧路径，处理 unborn HEAD；“移出”只改变 index，绝不删除工作区文件。
-
-目录行、按钮和右键菜单的控件身份绑定路径，事件回调按路径解析当前行，避免目录加载/刷新后列表序号变化时复用其他行的交互状态。图标槽固定 16px，加载省略号与展开箭头不改变文件名起点；点击吸顶目录定位时为父级吸顶行保留偏移，防止收起后上跳一行。
-
-Issue 格式名优先使用非空扩展名；无扩展名时使用文件名本身（如 `.DS_Store`、`.env`、`README`），仍不携带父目录路径或文件内容。
-
-正式包名为 Glim.app，可执行文件为 glim，内部 crate 统一使用 glim- 前缀；模块职责和依赖方向不变。为延续 macOS 应用身份，bundle identifier 保留 io.github.jony4.glimpse；不为测试修改正式包名。
-
-## 稳定滚动和布局
-
-双栏 diff 只转发当前接收用户输入一侧的纵向滚动。滚轮在 capture 阶段确定驱动侧，点击、拖动和键盘输入也会切换驱动侧。EditorState 在下一帧应用滚动位置；跟随侧的延迟通知、边界裁剪和初始化不再反向写回。横向位置独立保留，标题栏禁止压缩。
-
-SourceReader 使用独立编辑器列和固定 110px 缩略图列，不再使用编辑器右内边距预留空间。左侧面板默认 320px，禁止自动伸展，仍可在 180–420px 范围拖拽调整。
-
-连续同色 diff 行合并为高亮范围：双栏合并相邻范围，Inline 只跨单个换行合并，不跨上下文、颜色和 hunk 分隔。这样可减少长 diff 每帧扫描的装饰数量。
-
-启动窗口直接使用屏幕 visible_bounds 创建普通窗口，不再对已铺满的初始框架调用会切换尺寸的 macOS zoom。搜索框和下拉浮层均为 380px，以完整窗口宽度居中；前进/后退按钮绝对定位在输入框左侧，不参与居中计算。标题栏取消默认的单侧 80px 内边距。
-
-Dock 菜单复用 NewWindow 全局动作。Explorer 普通行、吸顶行、工作区根目录以及 Git 路径行共享路径菜单，提供 Finder 显示和相对/绝对路径复制；菜单操作绑定被点击行，不依赖正在阅读的文件。树行关闭按钮焦点描边，右键选择以行底色表示。
-
-## Basic text editing
-
-SourceReader retains an editable EditorState for ordinary text, with auto-closing pairs and smart indentation disabled. DiffReader and SplitDiff remain read-only. Input change events update the dirty flag against the saved baseline and refresh minimap data; rendering does not snapshot or write files. Markdown refreshes its preview and anchor map from the current buffer when entering Preview. Saving does not reset the editor, cursor or undo stack.
-
-`workspace/editing.rs` owns save/confirmation task handles and per-editor change subscriptions with cancellable 800 ms autosave timers. Autosave targets the editor identity even after tab switches; a queue serializes saves across tabs and retains requests arriving during a write. Manual save bypasses the debounce. Failed saves retain the draft without an automatic retry loop. Save captures the editor identity, disk baseline and current text, then performs I/O on the background executor. Success advances the baseline to the captured text, preserving any newer edits. Pre-save refresh work is canceled, and refresh results never replace dirty or saving tabs. Tab/window close, replacing a project and the app's Quit action offer Cancel/Discard when drafts exist. The application tracks weak workspace references to guard Quit across all windows.
-
-`services/files::save_document` serializes local saves, resolves symlinks, checks the current content against the baseline, writes a same-directory temporary file, preserves permissions and syncs before replacement. It rechecks content before replacement and rejects read-only, deleted, externally modified or oversized files. Atomic replacement prevents truncation on failure; it does not provide a cross-process filesystem transaction, preserve hard-link identity or recover from force-quit. No new-document/Save As/session-draft recovery flow is added.
-
-### Dock artwork
-Dock-only artwork uses a brighter tile and 16% larger internal mark, not a larger
-silhouette. Window chrome retains the original opaque, rectangular layout; no
-experimental glass surfaces, rounded reader frames or additional panel insets remain.
-
-## Format coverage and hidden-file inspection
-Core owns filename-to-language routing. Java/SQL/Make use enabled toolkit grammars;
-Vue/XML, shader and Cython aliases provide basic highlighting only. Services own
-EXR/HDR-to-SDR decoding and bounded SVG rasterization. Rendering performs no I/O.
-services/binary.rs adds bounded raw-byte previews for dotfiles that cannot use the
-text/image readers. Workspace background loading routes these to Renderer::Bytes,
-which retains a read-only SourceReader but exposes no save editor or dirty state.
-It is separate from editable Source and read-only Diff despite sharing presentation.
-See file-format-support.md for coverage, limits and deferred dedicated viewers.
-
-## Workspace roots and reader preferences
-
-Workspace retains all added folder roots; Explorer owns one collapsible root row per folder. Add Folder preserves tabs and drafts. Contained roots are coalesced to prevent duplicate tree identities. Searches span all roots and services::workspace::repositories_for_roots merges repositories by canonical root. Native watchers cover the added roots and existing document parents. Explicit Open Folder still replaces the workspace through the unsaved-draft guard.
-
-The source-control view uses the existing vertical resizable panels for Repositories and Changes. The activity bar toggles sidebar visibility while retaining the Explorer/Changes entities. Reader controls live in the title header; their selected backgrounds use low-opacity theme foreground. Word wrap updates existing EditorState entities (including both diff panes), applies to newly loaded readers, and persists through services::preferences in the user's Application Support/Glim directory. When the new preference file does not exist, it reads the legacy Application Support/Glimpse file; subsequent changes are saved only under Glim. Preference I/O runs outside render; only startup reads the small preference file synchronously. Manual save remains a keyboard/menu action, with no Save button in the reader.
-
-`app/languages.rs` registers bundled highlight queries for grammars whose pinned toolkit resources are empty (C#, Swift, GraphQL, Protobuf and CMake), and corrects ERB injection to Ruby. Grammar registration runs at startup, not in render; the existing toolkit parser registry remains the only highlighting engine.
-
-## Bounded text and model metadata
-
-`services/paged.rs` owns bounded UTF-8 windows, byte offsets, file version checks and the full-view ceiling. `workspace/loading` probes a 256 KiB window before choosing editable text (8 MiB maximum) or `Renderer::Paged` for oversized files / lines over 16 KiB / more than 100,000 newline characters. `reader/paged.rs` owns the background read and confirmation task, previous page offsets, one text buffer and byte ranges for virtual rows. Paging replaces the buffer; full view requires a prompt and is limited to 64 MiB and one million newline characters. Rows split long lines at UTF-8 boundaries. Paged content never exposes a save editor or autosave subscription; file fingerprints prevent needless replacement on filesystem refresh. Layout and render do no filesystem I/O. This budget is per tab, not an application-wide memory cap.
-
-`services/safetensors.rs` reads only the 8-byte length and a bounded JSON header, reports tensor shape/dtype/offset-derived sizes and metadata, then uses the existing read-only renderer. Weight bytes are never loaded. This inspector validates bounded structure and offset ranges, not complete tensor format correctness. serde_json is an I/O-layer dependency; core remains independent of it.
-
-`reader/lexical.rs` implements the toolkit's existing InputHighlighter interface for Dockerfile, INI, dotenv, ignore rules, Jinja-family templates and Nix. It retains a shared Rope snapshot and tokenizes visible lines on demand, using the active syntax theme. It adds no LSP, parser plugin layer or file-wide decoration arrays. Existing programming-language grammars remain in app/languages. The lexical mode deliberately provides basic single-line coloring, not complete cross-line syntax or folding.
-
-The bottom status bar is removed. Unsaved tabs use a small muted mark in the close-button slot rather than a marker appended to the filename. Basic editor typography uses a 14 px monospace face with 22 px line height.
-
-Autosave disk-baseline comparisons use a reusable 64 KiB buffer, avoiding two additional whole-document allocations during a save. Read-only SourceReader instances no longer retain an unused editing baseline.
-
-## Git branch management and Graph
-
-`core/git_management.rs` defines branch snapshots, explicit operation requests and topology rows without I/O or UI dependencies. `services/git/management.rs` extends the existing bounded, shell-free Git runner with branch/remotes snapshots, fetch/pull/push/publish/sync, branch create/switch/track/rename/safe-delete/merge, merge abort and stash/apply. A request includes the observed HEAD and current branch; execution rechecks both. Pull is fast-forward only, push uses an explicit upstream refspec, deletion uses `-d`, and worktree replacements require a clean status. No automatic stash, forced checkout, rebase or force push is introduced. Git errors and merge conflicts are retained and reported, not interpreted as successful rollback.
-
-`changes/repository.rs` owns input, picker, confirmation, snapshot and graph task handles. Changes has a third resizable Graph section, initially collapsed; it loads only when expanded. Git's bounded topological log supplies lane geometry, painted as themed paths/nodes by GPUI, with virtual rows and 200–1,000 commit limits. Branch metadata is bounded at 1,000 refs and stash metadata at 100 entries. Main-area historical readers are immutable and excluded from filesystem refresh; navigation retains commit identity independently of worktree file tabs. Commit detail output is bounded by the runner's 8 MiB ceiling and uses a read-only diff highlighter, with merge patches against the first parent.
-
-Workspace Git events pass through `workspace/git.rs` before mutation. Worktree updates check drafts and active saves across registered windows and temporarily lock editor states and Git write controls. New readers/windows inherit the lock. Completion unlocks, refreshes and routes failures to the existing bottom-right notification; close/quit is held while a management operation is running. Existing external file conflict detection remains active. This is process-local coordination, not a filesystem transaction against external Git clients. Fetch/push remain explicit user actions and retain the machine's configured authentication, hooks and signing behavior.
+正常构建使用已提交的 PNG/ICNS，不依赖 Node.js。第三方图标的许可证与归属保留在资源目录。构建和安装流程见[发布指南](releasing.md)，未完成事项见[待办](TODO.md)。

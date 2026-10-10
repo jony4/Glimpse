@@ -119,6 +119,55 @@ pub fn split_patch(patch: &str) -> Option<SplitPatch> {
     (!out.before.is_empty() || !out.after.is_empty()).then_some(out)
 }
 
+/// Compose independent file patches without losing file boundaries or binary changes.
+pub fn split_commit_patch(patch: &str) -> Option<SplitPatch> {
+    let mut result = SplitPatch {
+        before: String::new(),
+        after: String::new(),
+        removed: Vec::new(),
+        added: Vec::new(),
+    };
+    let starts: Vec<_> = patch
+        .match_indices("diff --git ")
+        .filter(|(i, _)| *i == 0 || patch.as_bytes()[i - 1] == b'\n')
+        .map(|(i, _)| i)
+        .collect();
+    if starts.is_empty() {
+        return None;
+    }
+    for (index, start) in starts.iter().enumerate() {
+        let section = &patch[*start..starts.get(index + 1).copied().unwrap_or(patch.len())];
+        let title = section.lines().next()?.strip_prefix("diff --git ")?;
+        let title = title.split_once(" b/").map_or(title, |(_, path)| path);
+        let heading = format!("\n{title}\n\n");
+        result.before.push_str(&heading);
+        result.after.push_str(&heading);
+        if let Some(file) = split_patch(section) {
+            let left = result.before.len();
+            let right = result.after.len();
+            result.removed.extend(
+                file.removed
+                    .into_iter()
+                    .map(|r| r.start + left..r.end + left),
+            );
+            result.added.extend(
+                file.added
+                    .into_iter()
+                    .map(|r| r.start + right..r.end + right),
+            );
+            result.before.push_str(&file.before);
+            result.after.push_str(&file.after);
+        } else {
+            let (message, _) = crate::diff_content(section);
+            result.before.push_str(&message);
+            result.before.push('\n');
+            result.after.push_str(&message);
+            result.after.push('\n');
+        }
+    }
+    Some(result)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

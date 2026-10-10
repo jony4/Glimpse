@@ -27,6 +27,7 @@ pub enum ChangeSelected {
     Git(PathBuf, glim_core::GitRequest),
     GitFinished,
     Commit(PathBuf, String),
+    CommitFile(PathBuf, String, PathBuf),
 }
 #[derive(Clone)]
 enum Row {
@@ -128,6 +129,35 @@ impl Changes {
         cx.notify();
     }
 
+    pub(super) fn select_repository(
+        &mut self,
+        i: usize,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if self.is_busy() || self.selected_repo == i {
+            return;
+        }
+        if let Some(root) = self.repository().map(|r| r.root.clone()) {
+            self.drafts
+                .insert(root, self.message.read(cx).value().to_string());
+        }
+        self.selected_repo = i;
+        self.collapsed.clear();
+        self.scroll = UniformListScrollHandle::new();
+        self.selected = None;
+        self.notice = None;
+        let message = self
+            .repository()
+            .and_then(|r| self.drafts.get(&r.root))
+            .cloned()
+            .unwrap_or_default();
+        self.message
+            .update(cx, |s, cx| s.set_value(message, window, cx));
+        self.rebuild();
+        self.reset_git(cx);
+        cx.notify();
+    }
     pub fn repository(&self) -> Option<&Repository> {
         self.repositories.get(self.selected_repo)
     }
@@ -321,7 +351,8 @@ impl Render for Changes {
                         .overflow_y_scroll()
                         .children(self.repositories.iter().enumerate().map(|(i, r)| {
                             let menu_root = r.root.clone();
-                            h_flex()
+                            let menu_view = cx.entity().downgrade();
+                            let row = h_flex()
                                 .id(("repo", i))
                                 .role(Role::Button)
                                 .aria_label(format!("Repository {}", r.root.display()))
@@ -364,35 +395,20 @@ impl Render for Changes {
                                         .text_color(cx.theme().muted_foreground)
                                         .child(format!("⑂ {}", r.branch)),
                                 )
-                                .on_click(cx.listener(move |view, _, window, cx| {
-                                    if view.is_busy() {
-                                        return;
-                                    }
-                                    if let Some(root) = view.repository().map(|r| r.root.clone()) {
-                                        view.drafts.insert(
-                                            root,
-                                            view.message.read(cx).value().to_string(),
-                                        );
-                                    }
-                                    view.selected_repo = i;
-                                    view.collapsed.clear();
-                                    view.scroll = UniformListScrollHandle::new();
-                                    view.selected = None;
-                                    view.notice = None;
-                                    let message = view
-                                        .repository()
-                                        .and_then(|r| view.drafts.get(&r.root))
-                                        .cloned()
-                                        .unwrap_or_default();
-                                    view.message
-                                        .update(cx, |s, cx| s.set_value(message, window, cx));
-                                    view.rebuild();
-                                    view.reset_git(cx);
-                                    cx.notify();
-                                }))
-                                .context_menu(move |menu, _, _| {
-                                    super::explorer::path_menu(menu, &menu_root, &menu_root)
+                                .when(i == self.selected_repo, |row| {
+                                    row.child(self.repository_actions(cx))
                                 })
+                                .on_click(cx.listener(move |view, _, window, cx| {
+                                    view.select_repository(i, window, cx);
+                                }))
+                                .context_menu(move |menu, _, cx| {
+                                    menu_view
+                                        .update(cx, |view, cx| {
+                                            view.repository_menu(menu, menu_root.clone(), cx)
+                                        })
+                                        .expect("Repository menu owner is alive")
+                                });
+                            v_flex().w_full().flex_shrink_0().child(row)
                         }))
                         .when(self.repositories.is_empty(), |list| {
                             list.child(
@@ -474,7 +490,6 @@ impl Render for Changes {
             )
             .when(!self.changes_collapsed, |panel| {
                 panel
-                    .child(self.git_controls(cx))
                     .child(
                         div().pl(px(26.)).pr_3().pb_3().child(
                             Input::new(&self.message)
@@ -728,4 +743,58 @@ fn disclosure(collapsed: bool, cx: &App) -> Icon {
     .size(px(14.))
     .flex_shrink_0()
     .text_color(cx.theme().muted_foreground)
+}
+
+#[cfg(test)]
+mod menu_tests {
+    use super::{Changes, Repository};
+    use gpui_kit::{AppContext, TestAppContext, WindowOptions, test::TestWindowExt};
+
+    #[gpui_kit::test]
+    fn repository_right_click_and_branch_dialog_do_not_panic(cx: &mut TestAppContext) {
+        cx.update(gpui_kit::init);
+        let (handle, view) = cx.update(|cx| {
+            gpui_kit::open_window(WindowOptions::default(), cx, |window, cx| {
+                cx.new(|cx| {
+                    let mut view = Changes::new(Vec::new(), window, cx);
+                    view.repositories = vec![Repository {
+                        root: "/fixture/repo".into(),
+                        branch: "main".into(),
+                        changes: Vec::new(),
+                    }];
+                    view.git.snapshot = Some(glim_core::GitSnapshot {
+                        branch: Some("main".into()),
+                        ..Default::default()
+                    });
+                    view
+                })
+            })
+            .unwrap()
+        });
+        cx.update_window(handle, |_, window, cx| {
+            window.render_frame(cx);
+            window.right_click("repo-branches", cx);
+        })
+        .unwrap();
+        cx.run_until_parked();
+        cx.update_window(handle, |_, window, cx| {
+            window.press("escape", cx);
+        })
+        .unwrap();
+        cx.run_until_parked();
+        cx.update_window(handle, |_, window, cx| {
+            window.render_frame(cx);
+            window.click("repo-branches", cx);
+        })
+        .unwrap();
+        cx.run_until_parked();
+        assert!(cx.update(|cx| view.read(cx).git.picker));
+        cx.update_window(handle, |_, window, cx| {
+            window.render_frame(cx);
+            window.press("escape", cx);
+        })
+        .unwrap();
+        cx.run_until_parked();
+        assert!(!cx.update(|cx| view.read(cx).git.picker));
+    }
 }

@@ -18,6 +18,18 @@ pub(super) struct Target {
     pub diff: Option<glim_core::GitChange>,
     pub root: Option<PathBuf>,
     pub commit_id: Option<String>,
+    pub commit_file: Option<PathBuf>,
+}
+impl Target {
+    pub(super) fn from_reader(reader: &crate::views::reader::Reader) -> Self {
+        Self {
+            path: reader.path.clone(),
+            diff: reader.diff.clone(),
+            root: reader.repository_root.clone(),
+            commit_id: reader.commit_id.clone(),
+            commit_file: reader.commit_file.clone(),
+        }
+    }
 }
 impl Workspace {
     pub(super) fn record_history(&mut self) {
@@ -28,12 +40,7 @@ impl Workspace {
         let Some(r) = self.active_reader() else {
             return;
         };
-        let target = Target {
-            path: r.path.clone(),
-            diff: r.diff.clone(),
-            root: r.repository_root.clone(),
-            commit_id: r.commit_id.clone(),
-        };
+        let target = Target::from_reader(r);
         if self.history_cursor.and_then(|i| self.history.get(i)) == Some(&target) {
             return;
         }
@@ -42,7 +49,7 @@ impl Workspace {
         self.history.push(target);
         self.history_cursor = Some(self.history.len() - 1);
     }
-    fn navigate(&mut self, forward: bool, window: &mut Window, cx: &mut Context<Self>) {
+    pub(super) fn navigate(&mut self, forward: bool, window: &mut Window, cx: &mut Context<Self>) {
         let Some(cursor) = self.history_cursor else {
             return;
         };
@@ -60,7 +67,7 @@ impl Workspace {
         self.history_cursor = Some(next);
         self.navigating = true;
         if let (Some(root), Some(oid)) = (target.root.clone(), target.commit_id) {
-            self.open_commit(root, oid, window, cx);
+            self.open_commit_file(root, oid, target.commit_file, window, cx);
         } else if let (Some(root), Some(change)) = (target.root, target.diff) {
             self.open_diff(root, change, window, cx);
         } else {
@@ -103,7 +110,7 @@ impl Workspace {
     fn toggle_word_wrap(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.word_wrap = !self.word_wrap;
         let enabled = self.word_wrap;
-        cx.set_global(crate::app::ReaderPreferences { word_wrap: enabled });
+        cx.global_mut::<crate::app::ReaderPreferences>().word_wrap = enabled;
         for reader in &self.tabs {
             reader.set_word_wrap(enabled, window, cx);
         }
@@ -121,6 +128,46 @@ impl Workspace {
         cx.notify();
     }
 
+    fn set_reader_preview(&mut self, preview: bool, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(index) = self.active else {
+            return;
+        };
+        let preference = self.tabs[index].preview_preference();
+        self.tabs[index].set_preview(preview, cx);
+        if !preview {
+            self.tabs[index].focus_source(window, cx);
+        }
+        if let Some(kind) = preference {
+            let prefs = cx.global_mut::<crate::app::ReaderPreferences>();
+            if kind == "html" {
+                prefs.html_preview = preview;
+            } else {
+                prefs.markdown_preview = preview;
+            }
+            let previous = prefs.preview_save_task.take();
+            let task = cx.spawn(async move |view, cx| {
+                if let Some(previous) = previous {
+                    previous.await;
+                }
+                let result = cx
+                    .background_executor()
+                    .spawn(
+                        async move { glim_services::preferences::save_preview_mode(kind, preview) },
+                    )
+                    .await;
+                if let Err(error) = result {
+                    let _ = view.update(cx, |v, cx| {
+                        v.error = Some(format!("Cannot remember reading mode: {error:#}").into());
+                        cx.notify();
+                    });
+                }
+            });
+            cx.global_mut::<crate::app::ReaderPreferences>()
+                .preview_save_task = Some(task);
+        }
+        cx.notify();
+    }
+
     fn reader_controls(&self, cx: &mut Context<Self>) -> AnyElement {
         let subtle = ButtonCustomVariant::new(cx)
             .hover(cx.theme().foreground.opacity(0.04))
@@ -131,15 +178,82 @@ impl Workspace {
                 Button::new("word-wrap")
                     .custom(subtle)
                     .small()
-                    .child(svg().path("navigation/wrap.svg").size(px(16.)))
+                    .icon(
+                        Icon::empty()
+                            .path("navigation/wrap.svg")
+                            .size(px(16.))
+                            .text_color(cx.theme().foreground),
+                    )
                     .accessibility_label("Word wrap")
-                    .tooltip("Word wrap")
+                    .tooltip(if self.word_wrap {
+                        "Turn off word wrap"
+                    } else {
+                        "Turn on word wrap"
+                    })
                     .selected(self.word_wrap)
                     .on_click(cx.listener(|v, _, window, cx| v.toggle_word_wrap(window, cx))),
             )
             .when(
+                self.active_reader().is_some_and(|r| r.diff.is_some()),
+                |bar| {
+                    bar.child(
+                        Button::new("show-file")
+                            .custom(subtle)
+                            .icon(Icon::new(gpui_kit::assets::IconName::FileText))
+                            .xsmall()
+                            .tooltip("View file")
+                            .accessibility_label("View file")
+                            .on_click(cx.listener(|view, _, window, cx| {
+                                if let Some(reader) = view.active_reader() {
+                                    view.open_path(reader.path.clone(), window, cx);
+                                }
+                            })),
+                    )
+                },
+            )
+            .when(
+                self.active_reader()
+                    .is_some_and(|r| r.diff.is_some() || r.historical),
+                |bar| {
+                    let split = self.active_reader().is_some_and(|r| r.side_by_side());
+                    let available = self.active_reader().is_some_and(|r| r.split_available());
+                    bar.child(
+                        Button::new("diff-split")
+                            .custom(subtle)
+                            .icon(Icon::new(gpui_kit::assets::IconName::Columns2))
+                            .xsmall()
+                            .tooltip("Side by side")
+                            .accessibility_label("Side by side")
+                            .selected(split)
+                            .disabled(!available)
+                            .on_click(cx.listener(|v, _, _, cx| {
+                                if let Some(i) = v.active {
+                                    v.tabs[i].set_side_by_side(true);
+                                }
+                                cx.notify();
+                            })),
+                    )
+                    .child(
+                        Button::new("diff-inline")
+                            .custom(subtle)
+                            .icon(Icon::new(gpui_kit::assets::IconName::Rows2))
+                            .xsmall()
+                            .tooltip("Inline")
+                            .accessibility_label("Inline")
+                            .selected(!split)
+                            .on_click(cx.listener(|v, _, _, cx| {
+                                if let Some(i) = v.active {
+                                    v.tabs[i].set_side_by_side(false);
+                                }
+                                cx.notify();
+                            })),
+                    )
+                },
+            )
+            .when(
                 self.active_reader().is_some_and(|r| r.can_preview()),
                 |bar| {
+                    let json = self.active_reader().is_some_and(|r| r.is_json());
                     let preview = self
                         .active_reader()
                         .is_some_and(|r| r.toggle_label() == "Source");
@@ -150,16 +264,17 @@ impl Workspace {
                             .child(
                                 Button::new("markdown-rendered")
                                     .custom(subtle)
-                                    .icon(Icon::new(gpui_kit::assets::IconName::Eye))
+                                    .icon(Icon::new(if json {
+                                        gpui_kit::assets::IconName::ListTree
+                                    } else {
+                                        gpui_kit::assets::IconName::Eye
+                                    }))
                                     .xsmall()
-                                    .accessibility_label("Preview")
-                                    .tooltip("Preview")
+                                    .accessibility_label(if json { "JSON tree" } else { "Preview" })
+                                    .tooltip(if json { "JSON tree" } else { "Preview" })
                                     .selected(preview)
-                                    .on_click(cx.listener(|view, _, _, cx| {
-                                        if let Some(i) = view.active {
-                                            view.tabs[i].set_preview(true, cx);
-                                        }
-                                        cx.notify();
+                                    .on_click(cx.listener(|view, _, window, cx| {
+                                        view.set_reader_preview(true, window, cx);
                                     })),
                             )
                             .child(
@@ -171,11 +286,7 @@ impl Workspace {
                                     .tooltip("Source")
                                     .selected(!preview)
                                     .on_click(cx.listener(|view, _, window, cx| {
-                                        if let Some(i) = view.active {
-                                            view.tabs[i].set_preview(false, cx);
-                                            view.tabs[i].focus_source(window, cx);
-                                        }
-                                        cx.notify();
+                                        view.set_reader_preview(false, window, cx);
                                     })),
                             ),
                     )

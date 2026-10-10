@@ -6,9 +6,10 @@ use gpui_kit::{
 };
 use std::{cell::Cell, collections::HashMap, ops::Range, path::Path, rc::Rc};
 
-pub(super) struct MarkdownReader {
+pub(super) struct MarkupReader {
     pub source: SourceReader,
     pub preview: bool,
+    pub html: bool,
     pub(super) state: Entity<TextViewState>,
     pub scroll: ScrollHandle,
     base: url::Url,
@@ -17,10 +18,29 @@ pub(super) struct MarkdownReader {
     _subscription: Subscription,
     reveal_pending: Rc<Cell<bool>>,
 }
-impl MarkdownReader {
+impl MarkupReader {
     pub fn new(path: &Path, text: &str, window: &mut Window, cx: &mut App) -> Self {
         let scroll = ScrollHandle::new();
-        let state = cx.new(|cx| TextViewState::markdown(text, cx));
+        let html = path
+            .extension()
+            .and_then(|s| s.to_str())
+            .is_some_and(|s| s.eq_ignore_ascii_case("html") || s.eq_ignore_ascii_case("htm"));
+        let preview = cx
+            .try_global::<crate::app::ReaderPreferences>()
+            .is_none_or(|preferences| {
+                if html {
+                    preferences.html_preview
+                } else {
+                    preferences.markdown_preview
+                }
+            });
+        let state = cx.new(|cx| {
+            if html {
+                TextViewState::html(text, cx)
+            } else {
+                TextViewState::markdown(text, cx)
+            }
+        });
         let reveal_pending = Rc::new(Cell::new(false));
         let pending = reveal_pending.clone();
         let subscription = cx.observe(&state, move |_, cx| {
@@ -33,7 +53,7 @@ impl MarkdownReader {
             reveal_pending,
             source: SourceReader::new(
                 text,
-                "markdown",
+                if html { "html" } else { "markdown" },
                 false,
                 Vec::new(),
                 scroll.clone(),
@@ -42,7 +62,8 @@ impl MarkdownReader {
             ),
             state,
             scroll,
-            preview: true,
+            preview,
+            html,
             base: url::Url::from_file_path(path).expect("absolute document path"),
             headings: headings(text),
             pending_anchor: None,
@@ -54,7 +75,6 @@ impl MarkdownReader {
         self.state.update(cx, |s, cx| s.set_text(&text, cx));
     }
     pub fn reveal(&mut self, anchor: &str) {
-        self.preview = true;
         self.pending_anchor = Some(anchor.to_owned());
         self.reveal_pending.set(true);
     }

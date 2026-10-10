@@ -39,3 +39,26 @@ pub fn save_word_wrap(enabled: bool) -> Result<()> {
     file.persist(path)?;
     Ok(())
 }
+
+pub fn preview_mode(kind: &str) -> bool {
+    preview_path(kind)
+        .ok()
+        .and_then(|path| std::fs::read_to_string(path).ok())
+        .is_none_or(|value| value.trim() != "source")
+}
+fn preview_path(kind: &str) -> Result<PathBuf> {
+    anyhow::ensure!(
+        matches!(kind, "html" | "markdown"),
+        "Unknown preview preference"
+    );
+    Ok(wrap_path()?.with_file_name(format!("{kind}-view")))
+}
+pub fn save_preview_mode(kind: &str, preview: bool) -> Result<()> {
+    let path = preview_path(kind)?;
+    let parent = path.parent().context("Invalid preferences path")?;
+    std::fs::create_dir_all(parent)?;
+    let mut file = tempfile::NamedTempFile::new_in(parent)?;
+    writeln!(file, "{}", if preview { "preview" } else { "source" })?;
+    file.persist(path)?;
+    Ok(())
+}

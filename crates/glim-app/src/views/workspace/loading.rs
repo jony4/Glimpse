@@ -21,8 +21,9 @@ pub(super) enum Content {
     File(Document),
     Page(glim_services::paged::TextPage),
     Bytes(glim_services::binary::BytePreview),
-    Commit(glim_services::binary::BytePreview),
+    Commit(glim_services::binary::BytePreview, Option<PathBuf>),
     Image(glim_services::media::ImageDocument),
+    Native(PathBuf, bool, bool),
     Diff(DiffDocument, PathBuf),
     Unavailable(PathBuf, String),
 }
@@ -80,6 +81,7 @@ impl Workspace {
         self.explorer = None;
         self.changes = None;
         self.roots.clear();
+        self.last_scan_warning = None;
         self.root = None;
         self.add_folder(snapshot, window, cx);
     }
@@ -120,6 +122,13 @@ impl Workspace {
                 window,
                 |view, _, event, window, cx| match event {
                     ExplorerEvent::OpenFile(path) => view.open_path(path.clone(), window, cx),
+                    ExplorerEvent::PlayFolder(path, shuffle) => {
+                        view.install_content(
+                            Content::Native(path.clone(), true, *shuffle),
+                            window,
+                            cx,
+                        );
+                    }
                     ExplorerEvent::Error(error) => {
                         view.error = Some(error.clone().into());
                         cx.notify();
@@ -149,6 +158,13 @@ impl Workspace {
                     ChangeSelected::Commit(root, oid) => {
                         view.open_commit(root.clone(), oid.clone(), window, cx)
                     }
+                    ChangeSelected::CommitFile(root, oid, path) => view.open_commit_file(
+                        root.clone(),
+                        oid.clone(),
+                        Some(path.clone()),
+                        window,
+                        cx,
+                    ),
                 },
             ));
             changes.update(cx, |v, cx| {
@@ -172,8 +188,8 @@ impl Workspace {
                 }
             }
             let repositories = glim_services::workspace::repositories_for_roots(&roots);
-            if let (Some(watch), Ok(repositories)) = (&mut watch, &repositories) {
-                let _ = watch.add_repositories(root, repositories);
+            if let Some(watch) = &mut watch {
+                let _ = watch.add_repositories(root, &repositories.repositories);
             }
             (roots, repositories, watch)
         });
@@ -184,13 +200,11 @@ impl Workspace {
                     return;
                 }
                 view.repository_task = None;
+                view.report_scan_warning(repositories.warning(), true);
                 if let Some(changes) = &view.changes {
                     changes.update(cx, |v, cx| {
                         v.set_loading(false, cx);
-                        match repositories {
-                            Ok(repositories) => v.set_repositories(repositories, cx),
-                            Err(error) => view.error = Some(format!("Git: {error:#}").into()),
-                        }
+                        v.set_repositories(repositories.repositories, cx);
                     });
                 }
                 view.watch = watch;
@@ -204,9 +218,12 @@ impl Workspace {
             Content::File(d) => Reader::new(d, window, cx),
             Content::Page(d) => Reader::from_page(d, cx),
             Content::Bytes(d) => Reader::from_bytes(d, window, cx),
-            Content::Commit(d) => Reader::from_commit(d.path, d.text, window, cx),
+            Content::Commit(d, file) => Reader::from_commit(d.path, d.text, file, window, cx),
             Content::Image(d) => Reader::from_image(d, window, cx),
             Content::Diff(d, r) => Reader::from_diff(d, &r, window, cx),
+            Content::Native(path, folder, shuffle) => {
+                Reader::from_native(path, folder, shuffle, cx)
+            }
             Content::Unavailable(p, e) => Reader::unavailable(p, e, window, cx),
         }
     }
@@ -217,6 +234,7 @@ impl Workspace {
         if let Some(i) = self.tabs.iter().position(|t| {
             t.path == reader.path
                 && t.historical == reader.historical
+                && t.commit_file == reader.commit_file
                 && t.diff.as_ref().map(|d| d.scope) == reader.diff.as_ref().map(|d| d.scope)
         }) {
             self.tabs[i] = reader;
@@ -246,26 +264,42 @@ impl Workspace {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        self.open_commit_file(root, oid, None, window, cx);
+    }
+    pub(super) fn open_commit_file(
+        &mut self,
+        root: PathBuf,
+        oid: String,
+        file: Option<PathBuf>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         let path = root.join(format!("Commit {oid}"));
         if let Some(index) = self
             .tabs
             .iter()
-            .position(|r| r.historical && r.path == path)
+            .position(|r| r.historical && r.path == path && r.commit_file == file)
         {
             self.activate_tab(index, window, cx);
             return;
         }
         self.loading = true;
+        let requested_file = file.clone();
         let work = cx.background_executor().spawn(async move {
-            glim_services::git::management::commit_details(&root, &oid)
-                .map(|text| glim_services::binary::BytePreview { path, text })
+            let text = match requested_file {
+                Some(file) => {
+                    glim_services::git::management::commit_file_details(&root, &oid, &file)
+                }
+                None => glim_services::git::management::commit_details(&root, &oid),
+            };
+            text.map(|text| glim_services::binary::BytePreview { path, text })
         });
         self.load_task = Some(cx.spawn_in(window, async move |view, cx| {
             let result = work.await;
             let _ = view.update_in(cx, |v, window, cx| {
                 v.loading = false;
                 match result {
-                    Ok(document) => v.install_content(Content::Commit(document), window, cx),
+                    Ok(document) => v.install_content(Content::Commit(document, file), window, cx),
                     Err(e) => v.error = Some(format!("Commit: {e:#}").into()),
                 }
                 cx.notify();
@@ -373,6 +407,10 @@ impl Workspace {
 }
 
 pub(super) fn read_content(path: &std::path::Path) -> anyhow::Result<Content> {
+    if glim_services::preview::supports(path) {
+        anyhow::ensure!(path.is_file(), "Not a regular file: {}", path.display());
+        return Ok(Content::Native(path.to_path_buf(), false, false));
+    }
     if path
         .extension()
         .and_then(|s| s.to_str())

@@ -6,6 +6,7 @@ pub fn init() {
     INIT.call_once(|| {
         let registry = LanguageRegistry::singleton();
         for (name, highlights) in [
+            ("json", include_str!("../../../../assets/highlights/json.scm")),
             ("csharp", include_str!("../../../../assets/highlights/csharp.scm")),
             ("swift", include_str!("../../../../assets/highlights/swift.scm")),
             ("graphql", include_str!("../../../../assets/highlights/graphql.scm")),

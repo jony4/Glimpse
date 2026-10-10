@@ -52,15 +52,100 @@ pub fn list_directory(path: &Path) -> Result<Vec<DirectoryEntry>> {
     Ok(entries)
 }
 
-/// Bounded discovery of repositories within a workspace, including linked worktrees.
-pub fn repositories(root: &Path) -> Result<Vec<Repository>> {
-    let current = git::inspect(root)?;
-    let mut roots = std::collections::BTreeSet::new();
+/// Completed discovery can contain useful repositories even when some paths are unreadable.
+#[derive(Default)]
+pub struct RepositoryScan {
+    pub repositories: Vec<Repository>,
+    failed_paths: std::collections::BTreeSet<PathBuf>,
+    warnings: Vec<String>,
+}
+impl RepositoryScan {
+    fn warn(&mut self, path: &Path, error: impl std::fmt::Display) {
+        if !self.failed_paths.insert(path.to_path_buf()) {
+            return;
+        }
+        // Keep diagnostics bounded even when a large disconnected volume fails.
+        if self.warnings.len() < 5 {
+            self.warnings.push(format!("{}: {error}", path.display()));
+        }
+    }
+
+    pub fn warning(&self) -> Option<String> {
+        (!self.failed_paths.is_empty()).then(|| {
+            format!(
+                "Git 扫描已完成，{} 处读取失败；已保留可用仓库。可刷新重试。\n{}{}",
+                self.failed_paths.len(),
+                self.warnings.join("\n"),
+                if self.failed_paths.len() > self.warnings.len() {
+                    "\n…"
+                } else {
+                    ""
+                },
+            )
+        })
+    }
+}
+
+// System-managed data is not an implicit project search location. Explicitly
+// opening a directory inside it still scans that selected directory normally.
+fn discovery_exclusions(root: &Path) -> Vec<PathBuf> {
+    let Some(home) = std::env::var_os("HOME").map(PathBuf::from) else {
+        return Vec::new();
+    };
+    let mut paths = vec![home.join(".Trash")];
+    #[cfg(target_os = "macos")]
+    paths.push(home.join("Library"));
+    paths
+        .into_iter()
+        .filter(|path| !root.starts_with(path))
+        .collect()
+}
+
+fn unavailable_descendant(error: &std::io::Error) -> bool {
+    matches!(
+        error.kind(),
+        std::io::ErrorKind::PermissionDenied
+            | std::io::ErrorKind::TimedOut
+            | std::io::ErrorKind::NotFound
+    )
+}
+
+fn walk_error_path(error: &ignore::Error) -> Option<&Path> {
+    match error {
+        ignore::Error::WithPath { path, .. } => Some(path),
+        ignore::Error::WithDepth { err, .. } | ignore::Error::WithLineNumber { err, .. } => {
+            walk_error_path(err)
+        }
+        _ => None,
+    }
+}
+
+fn scan_repositories(
+    root: &Path,
+    scan: &mut RepositoryScan,
+    seen: &mut std::collections::BTreeSet<PathBuf>,
+) {
+    match git::inspect(root) {
+        Ok(Some(repo)) => {
+            seen.insert(repo.root.clone());
+            scan.repositories.push(repo);
+        }
+        Ok(None) => {}
+        Err(error) => scan.warn(root, format!("{error:#}")),
+    }
+    // No elapsed-time, depth, entry-count or repository-count cutoff. Ignore rules,
+    // generated directories and symlink boundaries still define the search scope.
+    let excluded = discovery_exclusions(root);
     for entry in WalkBuilder::new(root)
         .hidden(false)
         .follow_links(false)
-        .max_depth(Some(6))
-        .filter_entry(|e| {
+        .filter_entry(move |e| {
+            if e.depth() == 0 {
+                return true;
+            }
+            if excluded.iter().any(|path| e.path().starts_with(path)) {
+                return false;
+            }
             e.file_type().is_some_and(|kind| kind.is_dir())
                 && !matches!(
                     e.file_name().to_str(),
@@ -68,54 +153,52 @@ pub fn repositories(root: &Path) -> Result<Vec<Repository>> {
                 )
         })
         .build()
-        .take(50_000)
     {
         let entry = match entry {
             Ok(entry) => entry,
-            // Repository discovery is opportunistic. macOS privacy-protected
-            // descendants must not discard repositories found elsewhere in ~.
-            // Errors at the requested root and other failures remain visible.
-            Err(error)
-                if error.depth().is_some_and(|depth| depth > 0)
-                    && error.io_error().is_some_and(|error| {
-                        error.kind() == std::io::ErrorKind::PermissionDenied
-                    }) =>
-            {
+            Err(error) => {
+                let path = walk_error_path(&error).unwrap_or(root);
+                let descendant = path != root || error.depth().is_some_and(|depth| depth > 0);
+                if descendant && error.io_error().is_some_and(unavailable_descendant) {
+                    continue;
+                }
+                scan.warn(path, &error);
                 continue;
             }
-            Err(error) => return Err(error.into()),
         };
-        if entry.file_type().is_some_and(|kind| kind.is_dir()) && entry.path().join(".git").exists()
-        {
-            roots.insert(entry.path().to_path_buf());
+        let path = entry.path();
+        if seen.contains(path) {
+            continue;
         }
-        if roots.len() >= 64 {
-            break;
+        match path.join(".git").try_exists() {
+            Ok(false) => continue,
+            Err(error) => {
+                if path == root || !unavailable_descendant(&error) {
+                    scan.warn(path, error);
+                }
+                continue;
+            }
+            Ok(true) => {}
+        }
+        seen.insert(path.to_path_buf());
+        match git::inspect(path) {
+            Ok(Some(repo)) => scan.repositories.push(repo),
+            Ok(None) => {}
+            Err(error) => scan.warn(path, format!("{error:#}")),
         }
     }
-    let mut repositories = Vec::new();
-    if let Some(repo) = current {
-        roots.remove(&repo.root);
-        repositories.push(repo);
-    }
-    for root in roots {
-        if let Some(repo) = git::inspect(&root)? {
-            repositories.push(repo);
-        }
-    }
-    repositories.sort_by(|a, b| a.root.cmp(&b.root));
-    Ok(repositories)
 }
 
 /// Merge nested and overlapping workspace roots without duplicate repositories.
-pub fn repositories_for_roots(roots: &[PathBuf]) -> Result<Vec<Repository>> {
-    let mut merged = std::collections::BTreeMap::new();
+pub fn repositories_for_roots(roots: &[PathBuf]) -> RepositoryScan {
+    let mut scan = RepositoryScan::default();
+    let mut seen = std::collections::BTreeSet::new();
     for root in roots {
-        for repo in repositories(root)? {
-            merged.entry(repo.root.clone()).or_insert(repo);
-        }
+        scan_repositories(root, &mut scan, &mut seen);
     }
-    Ok(merged.into_values().collect())
+    scan.repositories.sort_by(|a, b| a.root.cmp(&b.root));
+    scan.repositories.dedup_by(|a, b| a.root == b.root);
+    scan
 }
 
 pub fn search_files(root: &Path, query: &str) -> Vec<PathBuf> {
@@ -173,7 +256,7 @@ mod tests {
                 .status()?;
             assert!(status.success());
         }
-        let repos = repositories(&root)?;
+        let repos = repositories_for_roots(std::slice::from_ref(&root)).repositories;
         assert_eq!(
             repos.iter().map(|r| r.root.clone()).collect::<Vec<_>>(),
             [root.clone(), root.join("nested")]

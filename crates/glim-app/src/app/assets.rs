@@ -5,7 +5,10 @@ gpui_kit::assets::icon_assets!(
     ViewerIcons,
     [
         Files,
+        FileText,
         GitBranch,
+        RefreshCw,
+        Ellipsis,
         Eye,
         Code,
         List,

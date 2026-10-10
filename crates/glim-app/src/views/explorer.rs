@@ -18,6 +18,7 @@ use gpui_kit::{
 
 pub enum ExplorerEvent {
     OpenFile(PathBuf),
+    PlayFolder(PathBuf, bool),
     Error(String),
 }
 
@@ -239,6 +240,14 @@ impl Explorer {
         let row_path = row.entry.path.clone();
         let right_click_path = row_path.clone();
         let menu_path = row.entry.path.clone();
+        let menu_is_dir = row.entry.is_dir;
+        let menu_view = cx.entity().downgrade();
+        let has_media = self.directories.get(&menu_path).map(|entries| {
+            entries
+                .iter()
+                .any(|entry| !entry.is_dir && glim_services::preview::is_media(&entry.path))
+        });
+
         let menu_root = self
             .roots
             .iter()
@@ -246,7 +255,7 @@ impl Explorer {
             .max_by_key(|root| root.components().count())
             .cloned()
             .unwrap_or_default();
-        div()
+        let entry = div()
             .id(entry_id(
                 &row.entry.path,
                 if sticky { "sticky-row" } else { "tree-row" },
@@ -353,7 +362,37 @@ impl Explorer {
                     view.activate_path(&row_path, sticky, window, cx);
                 })),
             )
-            .context_menu(move |menu, _, _| path_menu(menu, &menu_path, &menu_root))
+            .context_menu(move |mut menu, _, _| {
+                if menu_is_dir && has_media != Some(false) {
+                    for (label, shuffle) in [("Play in Order", false), ("Shuffle Play", true)] {
+                        let path = menu_path.clone();
+                        let view = menu_view.clone();
+                        menu = menu.item(PopupMenuItem::new(label).on_click(move |_, _, cx| {
+                            let _ = view.update(cx, |_, cx| {
+                                cx.emit(ExplorerEvent::PlayFolder(path.clone(), shuffle))
+                            });
+                        }));
+                    }
+                    menu = menu.separator();
+                } else if !menu_is_dir && glim_services::preview::supports(&menu_path) {
+                    let path = menu_path.clone();
+                    let view = menu_view.clone();
+                    menu = menu
+                        .item(PopupMenuItem::new("Open Preview / Play").on_click(
+                            move |_, _, cx| {
+                                let _ = view.update(cx, |_, cx| {
+                                    cx.emit(ExplorerEvent::OpenFile(path.clone()))
+                                });
+                            },
+                        ))
+                        .separator();
+                }
+                path_menu(menu, &menu_path, &menu_root)
+            });
+        div()
+            .w_full()
+            .child(entry)
+            .on_mouse_down(MouseButton::Right, |_, _, cx| cx.stop_propagation())
             .into_any_element()
     }
 
@@ -440,16 +479,50 @@ impl Render for Explorer {
                     move |bounds, window, cx| {
                         // Layout the pinned rows after the list, using this frame's actual
                         // scroll position. They overlay the list without changing its height.
-                        let mut pinned = view
+                        let (mut pinned, blank_top) = view
                             .update(cx, |view, cx| {
                                 let offset =
                                     -f32::from(view.scroll.0.borrow().base_handle.offset().y);
-                                sticky_rows(&view.rows, offset, f32::from(bounds.size.height))
-                                    .into_iter()
-                                    .map(|(index, y)| (y, view.render_row(index, true, cx)))
-                                    .collect::<Vec<_>>()
+                                let blank_top =
+                                    (view.rows.len() as f32 * ROW_HEIGHT - offset).max(0.);
+                                let pinned =
+                                    sticky_rows(&view.rows, offset, f32::from(bounds.size.height))
+                                        .into_iter()
+                                        .map(|(index, y)| (y, view.render_row(index, true, cx)))
+                                        .collect::<Vec<_>>();
+                                (pinned, blank_top)
                             })
                             .unwrap_or_default();
+                        // A separate hit area below the final row: never an ancestor
+                        // of file/folder menus, so both menus cannot open together.
+                        let mut blank = if blank_top < f32::from(bounds.size.height) {
+                            let mut element = div()
+                                .id("files-blank-space")
+                                .w(bounds.size.width)
+                                .h(bounds.size.height - px(blank_top))
+                                .context_menu(|menu, _, _| {
+                                    menu.item(
+                                        PopupMenuItem::new("Add Folder to Workspace…").on_click(
+                                            |_, window, cx| {
+                                                window.dispatch_action(
+                                                    Box::new(crate::app::actions::AddFolder),
+                                                    cx,
+                                                );
+                                            },
+                                        ),
+                                    )
+                                })
+                                .into_any_element();
+                            element.prepaint_as_root(
+                                bounds.origin + point(px(0.), px(blank_top)),
+                                size(bounds.size.width, bounds.size.height - px(blank_top)).into(),
+                                window,
+                                cx,
+                            );
+                            Some(element)
+                        } else {
+                            None
+                        };
                         for (y, element) in &mut pinned {
                             element.prepaint_as_root(
                                 bounds.origin + point(px(0.), px(*y)),
@@ -458,9 +531,12 @@ impl Render for Explorer {
                                 cx,
                             );
                         }
-                        pinned
+                        (pinned, blank.take())
                     },
-                    |_, pinned, window, cx| {
+                    |_, (pinned, blank), window, cx| {
+                        if let Some(mut blank) = blank {
+                            blank.paint(window, cx);
+                        }
                         // A departing child folder slides behind its pinned parent.
                         for (_, mut element) in pinned.into_iter().rev() {
                             element.paint(window, cx);
