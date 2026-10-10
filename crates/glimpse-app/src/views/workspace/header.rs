@@ -1,7 +1,7 @@
 use super::Workspace;
 use gpui_kit::{
     component::{
-        ActiveTheme, Disableable, TitleBar,
+        ActiveTheme, Disableable, Sizable, TitleBar,
         button::{Button, ButtonCustomVariant, ButtonVariants},
         h_flex,
         input::Input,
@@ -92,73 +92,119 @@ impl Workspace {
     }
     pub(super) fn header(&self, cx: &mut Context<Self>) -> AnyElement {
         v_flex()
+            .relative()
+            .on_key_down(cx.listener(|v, event: &KeyDownEvent, _, cx| {
+                if event.keystroke.key == "escape" {
+                    v.results.clear();
+                    v.search_task = None;
+                    cx.notify();
+                }
+            }))
             .w_full()
             .flex_shrink_0()
             .child(
-                TitleBar::new().child(
-                    h_flex()
-                        .w_full()
-                        .justify_center()
-                        .gap_2()
-                        .child(
-                            Button::new("back")
-                                .ghost()
-                                .label("←")
-                                .accessibility_label("Back")
-                                .disabled(self.history_cursor.is_none_or(|i| i == 0))
-                                .on_click(cx.listener(|v, _, w, cx| v.navigate(false, w, cx))),
-                        )
-                        .child(
-                            Button::new("forward")
-                                .ghost()
-                                .label("→")
-                                .accessibility_label("Forward")
-                                .disabled(
-                                    self.history_cursor
-                                        .is_none_or(|i| i + 1 >= self.history.len()),
-                                )
-                                .on_click(cx.listener(|v, _, w, cx| v.navigate(true, w, cx))),
-                        )
-                        .child(div().w(px(380.)).child(Input::new(&self.search))),
+                TitleBar::new().h(px(44.)).pl_0().pr_0().child(
+                    h_flex().w_full().h_full().justify_center().child(
+                        div()
+                            .relative()
+                            .w(px(380.))
+                            .child(Input::new(&self.search).small().focus_bordered(false))
+                            .child(
+                                h_flex()
+                                    .absolute()
+                                    .right(relative(1.))
+                                    .top_0()
+                                    .h_full()
+                                    .mr_2()
+                                    .gap_1()
+                                    .child(
+                                        Button::new("back")
+                                            .ghost()
+                                            .small()
+                                            .label("←")
+                                            .accessibility_label("Back")
+                                            .disabled(self.history_cursor.is_none_or(|i| i == 0))
+                                            .on_click(
+                                                cx.listener(|v, _, w, cx| v.navigate(false, w, cx)),
+                                            ),
+                                    )
+                                    .child(
+                                        Button::new("forward")
+                                            .ghost()
+                                            .small()
+                                            .label("→")
+                                            .accessibility_label("Forward")
+                                            .disabled(
+                                                self.history_cursor
+                                                    .is_none_or(|i| i + 1 >= self.history.len()),
+                                            )
+                                            .on_click(
+                                                cx.listener(|v, _, w, cx| v.navigate(true, w, cx)),
+                                            ),
+                                    ),
+                            ),
+                    ),
                 ),
             )
             .when(!self.results.is_empty(), |v| {
                 v.child(
-                    h_flex().w_full().justify_center().child(
-                        v_flex()
-                            .id("file-search-results")
-                            .w(px(560.))
-                            .max_h(px(280.))
-                            .overflow_y_scroll()
-                            .bg(cx.theme().background)
-                            .border_1()
-                            .border_color(cx.theme().border)
-                            .children(self.results.iter().enumerate().map(|(i, path)| {
-                                let target = path.clone();
-                                let label = path
-                                    .strip_prefix(
-                                        self.root.as_deref().unwrap_or(std::path::Path::new("")),
-                                    )
-                                    .unwrap_or(path)
-                                    .to_string_lossy()
-                                    .into_owned();
-                                Button::new(("search-result", i))
-                                    .custom(ButtonCustomVariant::new(cx))
-                                    .accessibility_label(format!("Open {label}"))
-                                    .child(
-                                        h_flex()
-                                            .w_full()
-                                            .gap_2()
-                                            .child(crate::views::file_icons::file_icon(path))
-                                            .child(div().truncate().child(label)),
-                                    )
-                                    .w_full()
-                                    .on_click(cx.listener(move |v, _, w, cx| {
-                                        v.search.update(cx, |s, cx| s.set_value("", w, cx));
-                                        v.open_path(target.clone(), w, cx);
+                    deferred(
+                        h_flex()
+                            .absolute()
+                            .top(px(44.))
+                            .left_0()
+                            .w_full()
+                            .justify_center()
+                            .child(
+                                v_flex()
+                                    .id("file-search-results")
+                                    .occlude()
+                                    .shadow_lg()
+                                    .on_mouse_down_out(cx.listener(|v, _, _, cx| {
+                                        v.results.clear();
+                                        v.search_task = None;
+                                        cx.notify();
                                     }))
-                            })),
-                    ),
+                                    .w(px(380.))
+                                    .max_h(px(280.))
+                                    .overflow_y_scroll()
+                                    .bg(cx.theme().background)
+                                    .border_1()
+                                    .border_color(cx.theme().border)
+                                    .children(self.results.iter().enumerate().map(|(i, path)| {
+                                        let target = path.clone();
+                                        let label = path
+                                            .strip_prefix(
+                                                self.root
+                                                    .as_deref()
+                                                    .unwrap_or(std::path::Path::new("")),
+                                            )
+                                            .unwrap_or(path)
+                                            .to_string_lossy()
+                                            .into_owned();
+                                        Button::new(("search-result", i))
+                                            .custom(ButtonCustomVariant::new(cx))
+                                            .accessibility_label(format!("Open {label}"))
+                                            .child(
+                                                h_flex()
+                                                    .w_full()
+                                                    .gap_2()
+                                                    .child(crate::views::file_icons::file_icon(
+                                                        path,
+                                                    ))
+                                                    .child(div().truncate().child(label)),
+                                            )
+                                            .w_full()
+                                            .on_click(cx.listener(move |v, _, w, cx| {
+                                                v.search.update(cx, |s, cx| s.set_value("", w, cx));
+                                                v.sidebar = super::Sidebar::Files;
+                                                v.root_collapsed = false;
+                                                v.open_path(target.clone(), w, cx);
+                                            }))
+                                    })),
+                            ),
+                    )
+                    .with_priority(1),
                 )
             })
             .into_any_element()

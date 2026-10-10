@@ -2,7 +2,7 @@ use super::Workspace;
 use crate::views::reader::Reader;
 use gpui_kit::{
     component::{
-        ActiveTheme, Disableable, Selectable,
+        ActiveTheme, Disableable, Icon, Selectable, Sizable,
         button::{Button, ButtonCustomVariant, ButtonVariants},
         h_flex,
     },
@@ -53,73 +53,75 @@ impl Workspace {
 
 impl Workspace {
     pub(super) fn tab_bar(&self, cx: &mut Context<Self>) -> AnyElement {
-        let tabs = self
-            .tabs
-            .iter()
-            .enumerate()
-            .map(|(index, reader)| {
-                let active = self.active == Some(index);
-                let mut label = reader
-                    .path
-                    .file_name()
-                    .unwrap_or_default()
-                    .to_string_lossy()
-                    .into_owned();
-                if let Some(diff) = &reader.diff {
-                    label.push_str(&format!(" · {}", diff.scope.label()));
-                }
-                h_flex()
-                    .id(("document-tab", index))
-                    .h_full()
-                    .flex_shrink_0()
-                    .gap_2()
-                    .px_3()
-                    .border_r_1()
-                    .border_color(cx.theme().border)
-                    .border_t_2()
-                    .border_color(if active {
-                        cx.theme().primary
-                    } else {
-                        cx.theme().border
-                    })
-                    .bg(if active {
-                        cx.theme().background
-                    } else {
-                        cx.theme().sidebar
-                    })
-                    .cursor_pointer()
-                    .on_click(
-                        cx.listener(move |view, _, window, cx| {
+        let tabs =
+            self.tabs
+                .iter()
+                .enumerate()
+                .map(|(index, reader)| {
+                    let active = self.active == Some(index);
+                    let mut label = reader
+                        .path
+                        .file_name()
+                        .unwrap_or_default()
+                        .to_string_lossy()
+                        .into_owned();
+                    if let Some(diff) = &reader.diff {
+                        label.push_str(&format!(" · {}", diff.scope.label()));
+                    }
+                    h_flex()
+                        .id(("document-tab", index))
+                        .h_full()
+                        .flex_shrink_0()
+                        .gap_2()
+                        .px_3()
+                        .border_r_1()
+                        .border_color(cx.theme().border)
+                        .relative()
+                        .child(div().absolute().top_0().left_0().right_0().h(px(2.)).bg(
+                            if active {
+                                cx.theme().primary
+                            } else {
+                                cx.theme().border
+                            },
+                        ))
+                        .bg(if active {
+                            cx.theme().background
+                        } else {
+                            cx.theme().sidebar
+                        })
+                        .cursor_pointer()
+                        .on_click(cx.listener(move |view, _, window, cx| {
                             view.activate_tab(index, window, cx)
-                        }),
-                    )
-                    .child(
-                        Button::new(("activate-tab", index))
-                            .custom(ButtonCustomVariant::new(cx))
-                            .accessibility_label(format!("Show {}", reader.title))
-                            .child(
-                                h_flex()
-                                    .gap_2()
-                                    .child(crate::views::file_icons::file_icon(&reader.path))
-                                    .child(div().max_w(px(210.)).truncate().text_sm().child(label)),
-                            )
-                            .on_click(cx.listener(move |view, _, window, cx| {
-                                cx.stop_propagation();
-                                view.activate_tab(index, window, cx);
-                            })),
-                    )
-                    .child(
-                        Button::new(("close-tab", index))
-                            .ghost()
-                            .label("×")
-                            .accessibility_label(format!("Close {}", reader.title))
-                            .on_click(cx.listener(move |view, _, window, cx| {
-                                cx.stop_propagation();
-                                view.close_tab(index, window, cx);
-                            })),
-                    )
-            })
-            .collect::<Vec<_>>();
+                        }))
+                        .child(
+                            Button::new(("activate-tab", index))
+                                .custom(ButtonCustomVariant::new(cx))
+                                .accessibility_label(format!("Show {}", reader.title))
+                                .child(
+                                    h_flex()
+                                        .gap_2()
+                                        .child(crate::views::file_icons::file_icon(&reader.path))
+                                        .child(
+                                            div().max_w(px(210.)).truncate().text_sm().child(label),
+                                        ),
+                                )
+                                .on_click(cx.listener(move |view, _, window, cx| {
+                                    cx.stop_propagation();
+                                    view.activate_tab(index, window, cx);
+                                })),
+                        )
+                        .child(
+                            Button::new(("close-tab", index))
+                                .ghost()
+                                .label("×")
+                                .accessibility_label(format!("Close {}", reader.title))
+                                .on_click(cx.listener(move |view, _, window, cx| {
+                                    cx.stop_propagation();
+                                    view.close_tab(index, window, cx);
+                                })),
+                        )
+                })
+                .collect::<Vec<_>>();
         h_flex()
             .h(px(40.))
             .w_full()
@@ -140,17 +142,20 @@ impl Workspace {
             .when(
                 self.active_reader().is_some_and(|r| r.diff.is_some()),
                 |bar| {
-                    let split = self.active_reader().is_some_and(|r| r.side_by_side);
-                    let available = self.active_reader().is_some_and(|r| r.split.is_some());
+                    let split = self.active_reader().is_some_and(|r| r.side_by_side());
+                    let available = self.active_reader().is_some_and(|r| r.split_available());
                     bar.child(
                         Button::new("diff-split")
                             .ghost()
-                            .label("Side by side")
+                            .icon(Icon::new(gpui_kit::assets::IconName::Columns2))
+                            .xsmall()
+                            .tooltip("Side by side")
+                            .accessibility_label("Side by side")
                             .selected(split)
                             .disabled(!available)
                             .on_click(cx.listener(|v, _, _, cx| {
                                 if let Some(i) = v.active {
-                                    v.tabs[i].side_by_side = true;
+                                    v.tabs[i].set_side_by_side(true);
                                 }
                                 cx.notify();
                             })),
@@ -158,11 +163,14 @@ impl Workspace {
                     .child(
                         Button::new("diff-inline")
                             .ghost()
-                            .label("Inline")
+                            .icon(Icon::new(gpui_kit::assets::IconName::Rows2))
+                            .xsmall()
+                            .tooltip("Inline")
+                            .accessibility_label("Inline")
                             .selected(!split)
                             .on_click(cx.listener(|v, _, _, cx| {
                                 if let Some(i) = v.active {
-                                    v.tabs[i].side_by_side = false;
+                                    v.tabs[i].set_side_by_side(false);
                                 }
                                 cx.notify();
                             })),
@@ -182,7 +190,10 @@ impl Workspace {
                             .child(
                                 Button::new("markdown-rendered")
                                     .ghost()
-                                    .label("Preview")
+                                    .icon(Icon::new(gpui_kit::assets::IconName::Eye))
+                                    .xsmall()
+                                    .accessibility_label("Preview")
+                                    .tooltip("Preview")
                                     .selected(preview)
                                     .on_click(cx.listener(|view, _, _, cx| {
                                         if let Some(i) = view.active {
@@ -194,7 +205,10 @@ impl Workspace {
                             .child(
                                 Button::new("markdown-source")
                                     .ghost()
-                                    .label("Source")
+                                    .icon(Icon::new(gpui_kit::assets::IconName::Code))
+                                    .xsmall()
+                                    .accessibility_label("Source")
+                                    .tooltip("Source")
                                     .selected(!preview)
                                     .on_click(cx.listener(|view, _, window, cx| {
                                         if let Some(i) = view.active {

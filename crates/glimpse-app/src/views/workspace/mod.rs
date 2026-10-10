@@ -1,4 +1,3 @@
-mod clone;
 mod header;
 mod loading;
 mod render;
@@ -23,8 +22,10 @@ pub struct Workspace {
     history_cursor: Option<usize>,
     navigating: bool,
     search: Entity<InputState>,
-    clone_url: Entity<InputState>,
+    root_collapsed: bool,
+    repository_task: Option<Task<()>>,
     results: Vec<PathBuf>,
+    pending_anchor: Option<(PathBuf, String)>,
     search_task: Option<Task<()>>,
     _search_subscription: Subscription,
     watch: Option<glimpse_services::watch::WorkspaceWatch>,
@@ -60,10 +61,11 @@ impl Workspace {
             history: Vec::new(),
             history_cursor: None,
             navigating: false,
-            clone_url: cx
-                .new(|cx| InputState::new(window, cx).placeholder("https://github.com/owner/repo")),
+            root_collapsed: false,
+            repository_task: None,
             search,
             results: Vec::new(),
+            pending_anchor: None,
             search_task: None,
             _search_subscription: subscription,
             watch: None,

@@ -1,6 +1,6 @@
 # Glimpse development
 
-- Product scope: a macOS viewer for Markdown, source code, and Git diffs, with explicit Git staging and commit controls. File content remains read-only.
+- Product scope: a macOS viewer for Markdown, source code, and Git diffs, with explicit staging/unstaging controls and a Git commit input (Command-Enter, staged contents only); no cloning. File content remains read-only.
 - Keep crate dependencies one-way: glimpse-app -> glimpse-services -> glimpse-core;
   glimpse-app may also depend on glimpse-core directly.
 - glimpse-core must not depend on GPUI or perform I/O. Services do not import UI.
@@ -14,3 +14,4 @@
   cargo test --workspace --locked, and cargo build --locked.
 - For UI work, smoke-test on macOS when available and report any unverified interactions.
 - Document changes to module boundaries in docs/architecture.md.
+- When asked to package Glimpse, also install the new build over the existing local Glimpse.app by default, preserving a recoverable backup, unless the user asks for packaging only. Verify the installed bundle and launch it.

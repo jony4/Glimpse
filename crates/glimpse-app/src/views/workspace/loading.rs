@@ -26,6 +26,8 @@ pub(super) enum Content {
 impl Workspace {
     pub(super) fn open_path(&mut self, path: PathBuf, window: &mut Window, cx: &mut Context<Self>) {
         self.results.clear();
+        self.search_task = None;
+        self.pending_anchor = None;
         if let Some(index) = self
             .tabs
             .iter()
@@ -80,9 +82,13 @@ impl Workspace {
         self.refresh_task = None;
         window.set_window_title("Glimpse");
         self.root = Some(snapshot.root.clone());
-        self.error = snapshot.git_warning.map(Into::into);
-        self.watch = snapshot.watch;
-        self.start_watching(window, cx);
+        self.error = None;
+        self.root_collapsed = false;
+        self.search_task = None;
+        self.watch_setup = None;
+        self.watch_task = None;
+        self.watch = None;
+        self.repository_task = None;
         let explorer = cx.new(|cx| Explorer::new(snapshot.root, snapshot.entries, cx));
         self.subscriptions.push(cx.subscribe_in(
             &explorer,
@@ -96,7 +102,7 @@ impl Workspace {
             },
         ));
         self.explorer = Some(explorer);
-        let changes = cx.new(|cx| Changes::new(snapshot.repositories, window, cx));
+        let changes = cx.new(|cx| Changes::new(Vec::new(), window, cx));
         self.subscriptions.push(
             cx.subscribe_in(&changes, window, |view, _, event, window, cx| match event {
                 ChangeSelected::Open(root, change) => {
@@ -105,7 +111,38 @@ impl Workspace {
                 ChangeSelected::Refresh => view.refresh(window, cx),
             }),
         );
+        changes.update(cx, |v, cx| v.set_loading(true, cx));
         self.changes = Some(changes);
+        let root = self.root.clone().unwrap();
+        let work = cx.background_executor().spawn(async move {
+            let mut watch = glimpse_services::watch::WorkspaceWatch::new(&root).ok();
+            let repositories = glimpse_services::workspace::repositories(&root);
+            if let (Some(watch), Ok(repositories)) = (&mut watch, &repositories) {
+                let _ = watch.add_repositories(&root, repositories);
+            }
+            (root, repositories, watch)
+        });
+        self.repository_task = Some(cx.spawn_in(window, async move |view, cx| {
+            let (root, repositories, watch) = work.await;
+            let _ = view.update_in(cx, |view, window, cx| {
+                if view.root.as_ref() != Some(&root) {
+                    return;
+                }
+                view.repository_task = None;
+                if let Some(changes) = &view.changes {
+                    changes.update(cx, |v, cx| {
+                        v.set_loading(false, cx);
+                        match repositories {
+                            Ok(repositories) => v.set_repositories(repositories, cx),
+                            Err(error) => view.error = Some(format!("Git: {error:#}").into()),
+                        }
+                    });
+                }
+                view.watch = watch;
+                view.start_watching(window, cx);
+                cx.notify();
+            });
+        }));
     }
     pub(super) fn make_reader(content: Content, window: &mut Window, cx: &mut App) -> Reader {
         match content {
@@ -128,6 +165,12 @@ impl Workspace {
             self.active = Some(self.tabs.len() - 1);
             self.tab_scroll.scroll_to_item(self.tabs.len() - 1);
         }
+        if let Some((path, anchor)) = self.pending_anchor.take()
+            && let Some(i) = self.active
+            && self.tabs[i].path == path
+        {
+            self.tabs[i].reveal_anchor(&anchor, cx);
+        }
         self.record_history();
         window.set_window_title("Glimpse");
         if self.root.is_none() {
@@ -141,6 +184,7 @@ impl Workspace {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        self.pending_anchor = None;
         if let Some(i) = self.tabs.iter().position(|t| {
             t.path == root.join(&change.path)
                 && t.diff.as_ref().is_some_and(|d| d.scope == change.scope)

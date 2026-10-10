@@ -38,25 +38,30 @@ impl WorkspaceWatch {
                 }
             })?;
         watcher.watch(root, RecursiveMode::Recursive)?;
-        if let Ok(repositories) = crate::workspace::repositories(root) {
-            let mut paths = std::collections::BTreeSet::new();
-            for repo in repositories {
-                paths.insert(repo.root.clone());
-                if let Ok(metadata) = crate::git::metadata_directories(&repo.root) {
-                    paths.extend(metadata);
-                }
-            }
-            for path in paths {
-                if !path.starts_with(root) {
-                    watcher.watch(&path, RecursiveMode::Recursive)?;
-                }
-            }
-        }
         Ok(Self {
             _watcher: watcher,
             dirty,
         })
     }
+    /// Attach external linked-worktree metadata without scanning repositories again.
+    pub fn add_repositories(
+        &mut self,
+        root: &Path,
+        repositories: &[glimpse_core::Repository],
+    ) -> Result<()> {
+        let mut paths = std::collections::BTreeSet::new();
+        for repo in repositories {
+            paths.insert(repo.root.clone());
+            paths.extend(crate::git::metadata_directories(&repo.root)?);
+        }
+        for path in paths {
+            if !path.starts_with(root) {
+                self.add_path(&path)?;
+            }
+        }
+        Ok(())
+    }
+
     pub fn add_path(&mut self, path: &Path) -> Result<()> {
         self._watcher.watch(path, RecursiveMode::Recursive)?;
         Ok(())

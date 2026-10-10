@@ -8,6 +8,6 @@ mod workspace;
 pub use workspace::{DiffDocument, DiffScope, DirectoryEntry, GitChange, Repository};
 
 mod diff;
-pub use diff::{DiffSpan, changed_lines};
+pub use diff::{DiffSpan, changed_lines, diff_content};
 
 pub mod split_diff;

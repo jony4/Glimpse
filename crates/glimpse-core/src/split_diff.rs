@@ -32,7 +32,11 @@ pub fn split_patch(patch: &str) -> Option<SplitPatch> {
         }
         text.push('\n');
         if changed && line.is_some() {
-            spans.push(start..text.len());
+            if let Some(previous) = spans.last_mut().filter(|r| r.end == start) {
+                previous.end = text.len();
+            } else {
+                spans.push(start..text.len());
+            }
         }
     }
     fn flush(
@@ -75,10 +79,10 @@ pub fn split_patch(patch: &str) -> Option<SplitPatch> {
                 .next()?
                 .parse()
                 .ok()?;
-            out.before.push_str(line);
-            out.before.push('\n');
-            out.after.push_str(line);
-            out.after.push('\n');
+            if in_hunk {
+                out.before.push('\n');
+                out.after.push('\n');
+            }
             in_hunk = true;
         } else if in_hunk && line.starts_with('-') {
             deletes.push((old, line[1..].to_owned()));
@@ -106,21 +110,39 @@ pub fn split_patch(patch: &str) -> Option<SplitPatch> {
                 );
                 old += 1;
                 new += 1;
-            } else if !in_hunk {
-                out.before.push_str(line);
-                out.before.push('\n');
-                out.after.push_str(line);
-                out.after.push('\n');
+            } else {
+                in_hunk = false;
             }
         }
     }
     flush(&mut out, &mut deletes, &mut adds);
-    Some(out)
+    (!out.before.is_empty() || !out.after.is_empty()).then_some(out)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn long_change_blocks_use_one_decoration_and_do_not_cover_context() {
+        let patch = format!("@@ -1 +1,10001 @@\n context\n{}", "+新增\n".repeat(10_000));
+        let split = split_patch(&patch).unwrap();
+        assert_eq!(split.added.len(), 1);
+        let changed = &split.after[split.added[0].clone()];
+        assert_eq!(changed.lines().count(), 10_000);
+        assert!(!changed.contains("context"));
+        assert!(split.removed.is_empty());
+        assert_eq!(split.before.lines().count(), split.after.lines().count());
+    }
+
+    #[test]
+    fn hides_headers_and_retains_original_numbers_across_hunks() {
+        let split = split_patch("diff --git a/a b/a\nindex aaa..bbb\n--- a/a\n+++ b/a\n@@ -1 +1 @@\n-old\n+新\n@@ -20 +20 @@\n context\n").unwrap();
+        assert_eq!(split.before, "    1  old\n\n   20  context\n");
+        assert_eq!(split.after, "    1  新\n\n   20  context\n");
+        assert_eq!(&split.after[split.added[0].clone()], "    1  新\n");
+        assert!(split_patch("Binary files a/a and b/a differ\n").is_none());
+    }
+
     #[test]
     fn aligns_replacements_and_preserves_unicode_line_numbers() {
         let split = split_patch("@@ -8,2 +8,3 @@\n-old\n+新\n+extra\n context\n").unwrap();

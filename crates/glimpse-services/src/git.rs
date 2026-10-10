@@ -210,45 +210,6 @@ pub fn read_diff(root: &Path, change: &GitChange) -> Result<DiffDocument> {
     })
 }
 
-/// Clone into a new child of the selected parent, without overwriting an existing folder.
-pub fn clone_repository(url: &str, parent: &std::path::Path) -> anyhow::Result<std::path::PathBuf> {
-    anyhow::ensure!(
-        url.starts_with("https://") || url.starts_with("ssh://") || url.starts_with("git@"),
-        "Use an HTTPS or SSH repository URL"
-    );
-    let name = url
-        .trim_end_matches('/')
-        .rsplit('/')
-        .next()
-        .unwrap_or_default()
-        .trim_end_matches(".git");
-    anyhow::ensure!(
-        !name.is_empty() && name != "." && name != ".." && !name.contains([':', '\\', '?', '#']),
-        "Invalid repository name"
-    );
-    let destination = parent.join(name);
-    anyhow::ensure!(
-        !destination.exists(),
-        "Destination already exists: {}",
-        destination.display()
-    );
-    let output = run(
-        parent,
-        &[
-            OsStr::new("clone"),
-            OsStr::new("--"),
-            OsStr::new(url),
-            destination.as_os_str(),
-        ],
-    )?;
-    ensure!(
-        output.code == Some(0),
-        "Clone failed: {}",
-        output.stderr.trim()
-    );
-    Ok(destination)
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -430,24 +391,36 @@ mod tests {
     }
 }
 
-/// Explicit UI actions only; viewing and refresh never call this function.
-pub fn stage(root: &Path, change: &GitChange, staged: bool) -> Result<()> {
+/// Change only the requested index entries; never discard worktree contents.
+pub fn set_staged(root: &Path, changes: &[GitChange], staged: bool) -> Result<()> {
+    ensure!(!changes.is_empty(), "No changes selected");
+    let mut paths = std::collections::BTreeSet::new();
+    for change in changes {
+        for path in std::iter::once(&change.path).chain(change.original_path.iter()) {
+            ensure!(
+                !path.as_os_str().is_empty()
+                    && !path.is_absolute()
+                    && path.components().all(|c| matches!(c, Component::Normal(_))),
+                "Invalid repository-relative path"
+            );
+            paths.insert(path.clone());
+        }
+    }
+    let unborn = !staged && checked(root, &["rev-parse", "--verify", "HEAD"]).is_err();
     let mut args: Vec<OsString> = if staged {
-        vec!["add".into(), "--".into()]
+        ["add", "-A", "--"].into_iter().map(Into::into).collect()
+    } else if unborn {
+        ["rm", "--cached", "-f", "--ignore-unmatch", "--"]
+            .into_iter()
+            .map(Into::into)
+            .collect()
     } else {
-        vec!["restore".into(), "--staged".into(), "--".into()]
+        ["reset", "-q", "HEAD", "--"]
+            .into_iter()
+            .map(Into::into)
+            .collect()
     };
-    // `restore --staged` requires HEAD. An unborn index is removed with rm --cached.
-    if !staged && checked(root, &["rev-parse", "--verify", "HEAD"]).is_err() {
-        args = vec!["rm".into(), "--cached".into(), "-f".into(), "--".into()];
-    }
-    for path in std::iter::once(&change.path).chain(change.original_path.iter()) {
-        ensure!(
-            !path.is_absolute() && !path.components().any(|c| matches!(c, Component::ParentDir)),
-            "Invalid repository-relative path"
-        );
-        args.push(path.as_os_str().to_owned());
-    }
+    args.extend(paths.into_iter().map(|p| p.into_os_string()));
     let output = run(
         root,
         &args.iter().map(OsString::as_os_str).collect::<Vec<_>>(),
@@ -490,7 +463,61 @@ mod write_tests {
     use super::*;
     use std::fs;
     #[test]
-    fn commits_only_staged_changes_and_unstages_without_touching_worktree() -> Result<()> {
+    fn batch_stage_and_unstage_preserve_worktree_and_literal_paths() -> Result<()> {
+        let temp = tempfile::tempdir()?;
+        let root = temp.path();
+        checked(root, &["init", "-b", "main"])?;
+        checked(root, &["config", "user.name", "Test"])?;
+        checked(root, &["config", "user.email", "test@example.invalid"])?;
+        fs::create_dir(root.join("dir"))?;
+        fs::write(root.join("dir/[a].txt"), "one")?;
+        fs::write(root.join("other.txt"), "other")?;
+        let selected = inspect(root)?
+            .unwrap()
+            .changes
+            .into_iter()
+            .filter(|c| c.path.starts_with("dir"))
+            .collect::<Vec<_>>();
+        set_staged(root, &selected, true)?;
+        let staged = inspect(root)?
+            .unwrap()
+            .changes
+            .into_iter()
+            .filter(|c| c.scope == DiffScope::Index)
+            .collect::<Vec<_>>();
+        assert_eq!(staged.len(), 1);
+        set_staged(root, &staged, false)?; // unborn HEAD
+        assert_eq!(fs::read_to_string(root.join("dir/[a].txt"))?, "one");
+        assert!(
+            inspect(root)?
+                .unwrap()
+                .changes
+                .iter()
+                .all(|c| c.scope != DiffScope::Index)
+        );
+        set_staged(root, &selected, true)?;
+        commit(root, "base")?;
+        fs::rename(root.join("dir/[a].txt"), root.join("dir/new.txt"))?;
+        let all = inspect(root)?.unwrap().changes;
+        set_staged(root, &all, true)?;
+        let staged = inspect(root)?.unwrap().changes;
+        assert!(staged.iter().all(|c| c.scope == DiffScope::Index));
+        set_staged(root, &staged, false)?;
+        assert!(!root.join("dir/[a].txt").exists());
+        assert_eq!(fs::read_to_string(root.join("dir/new.txt"))?, "one");
+        assert_eq!(fs::read_to_string(root.join("other.txt"))?, "other");
+        let invalid = GitChange {
+            path: "../escape".into(),
+            original_path: None,
+            scope: DiffScope::Worktree,
+            status: 'M',
+        };
+        assert!(set_staged(root, &[invalid], true).is_err());
+        Ok(())
+    }
+
+    #[test]
+    fn commits_only_staged_contents_without_touching_worktree() -> Result<()> {
         let temp = tempfile::tempdir()?;
         let root = temp.path();
         checked(root, &["init", "-b", "main"])?;
@@ -498,28 +525,15 @@ mod write_tests {
         checked(root, &["config", "user.email", "test@example.invalid"])?;
         fs::write(root.join("[a].txt"), "base\n")?;
         fs::write(root.join("other.txt"), "other\n")?;
-        let change = inspect(root)?
-            .unwrap()
-            .changes
-            .into_iter()
-            .find(|c| c.path == Path::new("[a].txt"))
-            .unwrap();
-        stage(root, &change, true)?;
-        let staged = inspect(root)?
-            .unwrap()
-            .changes
-            .into_iter()
-            .find(|c| c.scope == DiffScope::Index)
-            .unwrap();
-        fs::write(root.join("[a].txt"), "working\n")?;
-        stage(root, &staged, false)?;
-        assert_eq!(fs::read_to_string(root.join("[a].txt"))?, "working\n");
         assert!(commit(root, "not staged").is_err());
-        stage(root, &change, true)?;
+        checked(root, &["add", "--", "[a].txt"])?;
+        fs::write(root.join("[a].txt"), "working\n")?;
         assert!(commit(root, "  ").is_err());
         commit(root, "fixture commit")?;
         let files = checked(root, &["ls-tree", "--name-only", "HEAD"])?;
         assert_eq!(String::from_utf8(files)?, "[a].txt\n");
+        assert_eq!(checked(root, &["show", "HEAD:[a].txt"])?, b"base\n");
+        assert_eq!(fs::read_to_string(root.join("[a].txt"))?, "working\n");
         assert!(
             inspect(root)?
                 .unwrap()

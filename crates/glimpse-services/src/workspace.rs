@@ -9,9 +9,6 @@ use crate::git;
 pub struct FolderSnapshot {
     pub root: PathBuf,
     pub entries: Vec<DirectoryEntry>,
-    pub repositories: Vec<Repository>,
-    pub watch: Option<crate::watch::WorkspaceWatch>,
-    pub git_warning: Option<String>,
 }
 
 pub fn open_folder(path: &Path) -> Result<FolderSnapshot> {
@@ -19,19 +16,7 @@ pub fn open_folder(path: &Path) -> Result<FolderSnapshot> {
         .canonicalize()
         .with_context(|| format!("Cannot open {}", path.display()))?;
     let entries = list_directory(&root)?;
-    // A missing/broken Git installation must not prevent ordinary folder browsing.
-    let (repository, git_warning) = match repositories(&root) {
-        Ok(repository) => (repository, None),
-        Err(error) => (Vec::new(), Some(format!("Git: {error:#}"))),
-    };
-    let watch = crate::watch::WorkspaceWatch::new(&root).ok();
-    Ok(FolderSnapshot {
-        root,
-        entries,
-        repositories: repository,
-        watch,
-        git_warning,
-    })
+    Ok(FolderSnapshot { root, entries })
 }
 
 /// Read only immediate children; do not follow directory symlinks or scan the whole tree.
@@ -69,19 +54,18 @@ pub fn list_directory(path: &Path) -> Result<Vec<DirectoryEntry>> {
 
 /// Bounded discovery of repositories within a workspace, including linked worktrees.
 pub fn repositories(root: &Path) -> Result<Vec<Repository>> {
+    let current = git::inspect(root)?;
     let mut roots = std::collections::BTreeSet::new();
-    if let Some(repo) = git::inspect(root)? {
-        roots.insert(repo.root);
-    }
     for entry in WalkBuilder::new(root)
         .hidden(false)
         .follow_links(false)
         .max_depth(Some(6))
         .filter_entry(|e| {
-            !matches!(
-                e.file_name().to_str(),
-                Some(".git" | "node_modules" | "target" | "dist")
-            )
+            e.file_type().is_some_and(|kind| kind.is_dir())
+                && !matches!(
+                    e.file_name().to_str(),
+                    Some(".git" | "node_modules" | "target" | "dist")
+                )
         })
         .build()
         .take(50_000)
@@ -95,10 +79,18 @@ pub fn repositories(root: &Path) -> Result<Vec<Repository>> {
             break;
         }
     }
-    roots
-        .into_iter()
-        .filter_map(|root| git::inspect(&root).transpose())
-        .collect()
+    let mut repositories = Vec::new();
+    if let Some(repo) = current {
+        roots.remove(&repo.root);
+        repositories.push(repo);
+    }
+    for root in roots {
+        if let Some(repo) = git::inspect(&root)? {
+            repositories.push(repo);
+        }
+    }
+    repositories.sort_by(|a, b| a.root.cmp(&b.root));
+    Ok(repositories)
 }
 
 pub fn search_files(root: &Path, query: &str) -> Vec<PathBuf> {
@@ -130,6 +122,39 @@ pub fn search_files(root: &Path, query: &str) -> Vec<PathBuf> {
 mod tests {
     use super::*;
     use std::fs;
+
+    #[test]
+    fn opening_folder_does_not_wait_for_git_or_scan_descendants() -> Result<()> {
+        let temp = tempfile::tempdir()?;
+        fs::write(temp.path().join(".git"), "gitdir: /does/not/exist")?;
+        fs::create_dir(temp.path().join("nested"))?;
+        fs::write(temp.path().join("nested/hidden-from-first-level.txt"), "")?;
+        let snapshot = open_folder(temp.path())?;
+        assert_eq!(snapshot.root, temp.path().canonicalize()?);
+        assert_eq!(snapshot.entries.len(), 1);
+        assert_eq!(snapshot.entries[0].path.file_name().unwrap(), "nested");
+        Ok(())
+    }
+
+    #[test]
+    fn discovery_keeps_nested_repositories_without_duplicates() -> Result<()> {
+        let temp = tempfile::tempdir()?;
+        let root = temp.path().canonicalize()?;
+        for path in [&root, &root.join("nested")] {
+            fs::create_dir_all(path)?;
+            let status = std::process::Command::new("git")
+                .args(["init", "-q", "-b", "main"])
+                .arg(path)
+                .status()?;
+            assert!(status.success());
+        }
+        let repos = repositories(&root)?;
+        assert_eq!(
+            repos.iter().map(|r| r.root.clone()).collect::<Vec<_>>(),
+            [root.clone(), root.join("nested")]
+        );
+        Ok(())
+    }
 
     #[test]
     fn lists_one_level_respects_ignore_and_keeps_dotfiles() -> Result<()> {

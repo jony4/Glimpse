@@ -1,7 +1,24 @@
 use gpui_kit::{AssetSource, SharedString};
 use std::borrow::Cow;
 
-gpui_kit::assets::icon_assets!(ViewerIcons, [Files, GitBranch]);
+gpui_kit::assets::icon_assets!(
+    ViewerIcons,
+    [
+        Files,
+        GitBranch,
+        Eye,
+        Code,
+        List,
+        ListTree,
+        Columns2,
+        Rows2,
+        Plus,
+        Minus,
+        ChevronDown,
+        ChevronRight,
+        FolderGit2
+    ]
+);
 
 pub struct Assets;
 
@@ -190,8 +207,8 @@ impl AssetSource for Assets {
                 "../../../../assets/branding/glimpse.png"
             ))));
         }
-        if matches!(path, "icons/files.svg" | "icons/git-branch.svg") {
-            return ViewerIcons.load(path);
+        if let Some(icon) = ViewerIcons.load(path)? {
+            return Ok(Some(icon));
         }
         gpui_kit::assets::Assets.load(path)
     }

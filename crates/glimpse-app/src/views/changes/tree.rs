@@ -7,6 +7,21 @@ use std::{
     path::PathBuf,
 };
 
+pub(super) fn group(scope: DiffScope) -> DiffScope {
+    if scope == DiffScope::Index {
+        DiffScope::Index
+    } else {
+        DiffScope::Worktree
+    }
+}
+pub(super) fn label(scope: DiffScope) -> &'static str {
+    if scope == DiffScope::Index {
+        "Staged Changes"
+    } else {
+        "Changes"
+    }
+}
+
 #[derive(Default)]
 struct Directory {
     directories: BTreeMap<OsString, Directory>,
@@ -18,22 +33,20 @@ pub(super) fn rows(
     collapsed: &HashSet<(DiffScope, PathBuf)>,
 ) -> Vec<Row> {
     let mut rows = Vec::new();
-    for scope in [
-        DiffScope::Conflict,
-        DiffScope::Index,
-        DiffScope::Worktree,
-        DiffScope::Untracked,
-    ] {
+    for scope in [DiffScope::Index, DiffScope::Worktree] {
         let mut files = changes
             .iter()
             .enumerate()
-            .filter(|(_, c)| c.scope == scope)
+            .filter(|(_, c)| group(c.scope) == scope)
             .map(|(i, _)| i)
             .collect::<Vec<_>>();
         if files.is_empty() {
             continue;
         }
         rows.push(Row::Group(scope));
+        if collapsed.contains(&(scope, PathBuf::new())) {
+            continue;
+        }
         files.sort_by(|a, b| changes[*a].path.cmp(&changes[*b].path));
         if !tree {
             rows.extend(files.into_iter().map(|i| Row::File(i, 0)));
@@ -84,6 +97,39 @@ mod tests {
             status: 'M',
             scope,
         }
+    }
+    #[test]
+    fn working_changes_combine_untracked_and_conflict_without_losing_scope() {
+        let changes = vec![
+            change("new.txt", DiffScope::Untracked),
+            change("conflict.txt", DiffScope::Conflict),
+            change("edit.txt", DiffScope::Worktree),
+            change("staged.txt", DiffScope::Index),
+        ];
+        let actual = rows(&changes, false, &HashSet::new());
+        assert_eq!(
+            actual.iter().filter(|r| matches!(r, Row::Group(_))).count(),
+            2
+        );
+        assert_eq!(
+            actual
+                .iter()
+                .filter(|r| matches!(r, Row::File(_, _)))
+                .count(),
+            4
+        );
+        let collapsed = rows(
+            &changes,
+            false,
+            &HashSet::from([(DiffScope::Worktree, PathBuf::new())]),
+        );
+        assert_eq!(
+            collapsed
+                .iter()
+                .filter(|r| matches!(r, Row::File(_, _)))
+                .count(),
+            1
+        );
     }
     #[test]
     fn folders_precede_files_and_collapse_stays_within_group() {

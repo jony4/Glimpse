@@ -17,13 +17,35 @@ pub struct SplitDiff {
     removed: Vec<std::ops::Range<usize>>,
     added: Vec<std::ops::Range<usize>>,
     palette: Option<(Hsla, Hsla)>,
-    last_y: [Pixels; 2],
+    scroll_sync: ScrollSync,
 }
+/// Only a pane receiving user input may drive its peer. Editor scroll writes
+/// are deferred until layout, so notifications from the follower are never input.
+#[derive(Default)]
+struct ScrollSync {
+    leader: Option<usize>,
+    observed: [f32; 2],
+}
+impl ScrollSync {
+    fn activate(&mut self, pane: usize) {
+        self.leader = Some(pane);
+    }
+    fn changed(&mut self, pane: usize, y: f32) -> bool {
+        let moved = (y - self.observed[pane]).abs() > 0.5;
+        self.observed[pane] = y;
+        moved && self.leader == Some(pane)
+    }
+}
+
 impl SplitDiff {
     pub fn offset(&self, cx: &App) -> Point<Pixels> {
         self.left.read(cx).scroll_offset()
     }
     pub fn restore_offset(&mut self, offset: Point<Pixels>, cx: &mut Context<Self>) {
+        self.scroll_sync = ScrollSync {
+            leader: None,
+            observed: [f32::from(offset.y); 2],
+        };
         for state in [&self.left, &self.right] {
             state.update(cx, |s, cx| s.set_scroll_offset(offset, cx));
         }
@@ -52,13 +74,12 @@ impl SplitDiff {
         {
             subscriptions.push(cx.observe(&from, move |view, from, cx| {
                 let y = from.read(cx).scroll_offset().y;
-                if (y - view.last_y[index]).abs() > px(0.5) {
-                    view.last_y[index] = y;
-                    if (to.read(cx).scroll_offset().y - y).abs() > px(0.5) {
-                        to.update(cx, |state, cx| {
-                            state.set_scroll_offset(point(state.scroll_offset().x, y), cx)
-                        });
-                    }
+                if view.scroll_sync.changed(index, f32::from(y))
+                    && (to.read(cx).scroll_offset().y - y).abs() > px(0.5)
+                {
+                    to.update(cx, |state, cx| {
+                        state.set_scroll_offset(point(state.scroll_offset().x, y), cx)
+                    });
                 }
             }));
         }
@@ -73,7 +94,7 @@ impl SplitDiff {
             removed: patch.removed,
             added: patch.added,
             palette: None,
-            last_y: [px(0.); 2],
+            scroll_sync: ScrollSync::default(),
         }
     }
 }
@@ -104,34 +125,105 @@ impl Render for SplitDiff {
             }
             self.palette = Some(palette);
         }
-        h_flex().size_full().children(
-            [("Before", self.left.clone()), ("After", self.right.clone())]
-                .into_iter()
-                .map(|(label, state)| {
-                    v_flex()
-                        .flex_1()
-                        .min_w_0()
-                        .h_full()
-                        .border_r_1()
-                        .border_color(cx.theme().border)
-                        .child(
-                            div()
-                                .h(px(26.))
-                                .px_3()
-                                .text_xs()
-                                .text_color(cx.theme().muted_foreground)
-                                .child(label),
-                        )
-                        .child(
-                            div().flex_1().min_h_0().w_full().child(
-                                Editor::new(&state)
-                                    .readonly(true)
-                                    .appearance(false)
-                                    .bordered(false)
-                                    .size_full(),
-                            ),
-                        )
-                }),
-        )
+        h_flex()
+            .size_full()
+            .min_w_0()
+            .min_h_0()
+            .overflow_hidden()
+            .children(
+                [("Before", self.left.clone()), ("After", self.right.clone())]
+                    .into_iter()
+                    .enumerate()
+                    .map(|(index, (label, state))| {
+                        let view = cx.entity().downgrade();
+                        v_flex()
+                            .id(("diff-pane", index))
+                            .relative()
+                            .min_h_0()
+                            .overflow_hidden()
+                            .capture_any_mouse_down(
+                                cx.listener(move |v, _, _, _| v.scroll_sync.activate(index)),
+                            )
+                            .capture_key_down(
+                                cx.listener(move |v, _, _, _| v.scroll_sync.activate(index)),
+                            )
+                            .child(
+                                canvas(
+                                    |_, _, _| {},
+                                    move |bounds, _, window, _| {
+                                        let view = view.clone();
+                                        // The editor stops wheel propagation. Capture before it handles the
+                                        // gesture, including momentum, without consuming the event.
+                                        window.on_mouse_event(
+                                            move |event: &ScrollWheelEvent, phase, _, cx| {
+                                                if phase == DispatchPhase::Capture
+                                                    && bounds.contains(&event.position)
+                                                {
+                                                    let _ = view.update(cx, |v, _| {
+                                                        v.scroll_sync.activate(index)
+                                                    });
+                                                }
+                                            },
+                                        );
+                                    },
+                                )
+                                .absolute()
+                                .size_full(),
+                            )
+                            .flex_1()
+                            .min_w_0()
+                            .h_full()
+                            .border_r_1()
+                            .border_color(cx.theme().border)
+                            .child(
+                                div()
+                                    .h(px(26.))
+                                    .flex_shrink_0()
+                                    .px_3()
+                                    .text_xs()
+                                    .text_color(cx.theme().muted_foreground)
+                                    .child(label),
+                            )
+                            .child(
+                                div().flex_1().min_h_0().w_full().child(
+                                    Editor::new(&state)
+                                        .readonly(true)
+                                        .appearance(false)
+                                        .bordered(false)
+                                        .size_full(),
+                                ),
+                            )
+                    }),
+            )
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::ScrollSync;
+    #[test]
+    fn delayed_follower_notifications_cannot_pull_the_driver_back() {
+        let mut sync = ScrollSync::default();
+        sync.activate(0);
+        assert!(sync.changed(0, -100.));
+        assert!(sync.changed(0, -180.));
+        assert!(!sync.changed(1, -100.)); // first queued layout completes late
+        assert!(!sync.changed(1, -180.));
+        assert!(!sync.changed(0, -180.));
+        assert!(sync.changed(0, -250.));
+        assert!(!sync.changed(1, -230.)); // follower hits its bottom boundary
+        assert!(!sync.changed(1, -250.));
+    }
+    #[test]
+    fn either_pane_can_drive_after_input_but_restoration_cannot() {
+        let mut sync = ScrollSync::default();
+        assert!(!sync.changed(0, -400.));
+        assert!(!sync.changed(1, -400.));
+        sync.activate(1);
+        assert!(sync.changed(1, -500.));
+        assert!(!sync.changed(0, -500.));
+        sync.activate(0);
+        assert!(sync.changed(0, -420.));
+        assert!(!sync.changed(1, -420.));
     }
 }

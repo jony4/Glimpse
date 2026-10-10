@@ -58,7 +58,7 @@ impl Workspace {
         }));
     }
     pub(super) fn refresh(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        if self.refresh_task.is_some() {
+        if self.refresh_task.is_some() || self.repository_task.is_some() {
             return;
         }
         let root = self.root.clone();

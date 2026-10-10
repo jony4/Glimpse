@@ -27,7 +27,7 @@ with tempfile.TemporaryDirectory(prefix='glimpse-dmg-') as directory:
         f'Glimpse {version} — Apple Silicon (arm64)\n\n'
         'Drag Glimpse.app to Applications.\n'
         'AI writes. You see.\n\n'
-        'This first release is ad-hoc signed, without Developer ID signing or notarization.\n'
+        'This release is ad-hoc signed, without Developer ID signing or notarization.\n'
         'macOS Gatekeeper may require explicit approval in System Settings > Privacy & Security.\n\n'
         'Source and issues: https://github.com/jony4/Glimpse\n', encoding='utf-8')
     subprocess.run(['hdiutil', 'create', '-ov', '-volname', f'Glimpse {version}',

@@ -2129,7 +2129,7 @@ dependencies = [
 
 [[package]]
 name = "glimpse-app"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "anyhow",
  "glimpse-core",
@@ -2140,11 +2140,11 @@ dependencies = [
 
 [[package]]
 name = "glimpse-core"
-version = "0.1.0"
+version = "0.1.1"
 
 [[package]]
 name = "glimpse-services"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "anyhow",
  "glimpse-core",
