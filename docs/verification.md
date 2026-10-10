@@ -110,3 +110,50 @@ The 0.1.1 workspace and bundle versions match (CFBundleVersion 2). Required fmt,
 The DMG was verified and mounted read-only. The embedded app is arm64-only, its ad-hoc signature passes strict validation, its executable matches the built release bundle, and its Applications shortcut points to /Applications. The SHA-256 sidecar validates successfully. The exact release bundle replaced the local installation with a recoverable backup; it launched under the unchanged Glimpse name and displayed the project Explorer. Existing native-test limitations above remain applicable.
 
 DMG SHA-256: ec1ad562b5f3e18ae191a04abc8ad94b80a39dab356dc936b7117a5833929bfd
+
+## Basic text editing (local development build)
+
+Ordinary UTF-8 file/source views now accept typing, deletion, selection, undo/redo and explicit Save / Command-S. Markdown source editing feeds the preview when switching modes; all diff surfaces remain read-only. This is an edit-existing-files workflow, without New Document, Save As, autosave or session-draft recovery.
+
+Required format, strict Clippy, workspace tests (40), debug build and optimized arm64 build pass. The toolkit's test-support feature is enabled only for development tests. Headless production-window tests drive actual editor keyboard input and Command-S, verify the file is untouched before Save, confirm undo remains available after Save, protect a dirty buffer from external refresh, reject conflicting saves, and cancel a close prompt without losing the buffer. Further tests verify preview text reflects unsaved Markdown and diff input remains unchanged. File-service tests cover concurrent saves, external changes/deletion, null-byte rejection, permissions and symlink preservation.
+
+The local app was installed and launched without renaming it. Desktop keyboard testing was interrupted by active user interaction, so tests were completed in isolated headless windows without touching user documents. macOS IME composition, native close-button behavior, multi-window Quit dialogs and OS-level termination were not fully exercised. Quit via the app action and normal window/tab/project closures are guarded; forced/system termination has no draft-recovery guarantee. Atomic replacement preserves permission bits but not hard-link identity or extended attributes; it is not an interprocess compare-and-swap primitive.
+
+## File-tree click stability
+
+The pinned-directory click regression was reproduced in a headless production window: restoring the old zero-offset scroll behavior moved the clicked label from y=39px to y=7px. The fix preserves the ancestor-row offset and the label's visual slot. Regression coverage also checks label bounds through collapsed/loading/expanded states and 20 consecutive cached expand/collapse clicks.
+
+Rows, buttons and their context menus now use path-based identities rather than changing visible-list indices. Click handlers resolve the current row by path. A fixed 16px icon slot keeps font-dependent loading/disclosure glyph widths out of filename positioning. Native-font differences are addressed by fixed geometry; the headless test font alone does not reproduce proportional-glyph width differences. These checks do not cover every real trackpad/double-click timing scenario.
+
+### UI experiment rollback (2026-10-10)
+The incomplete glass-style experiment was fully withdrawn: original 44px title bar,
+search results styling, 52×48px rectangular activity controls, and edge-to-edge reader
+layout restored. Window blur, translucent tints, added reader frame and panel insets
+are absent. Default sidebar width remains 320px. Basic editing, file-tree jitter fixes
+and the separately requested Dock artwork are preserved.
+Formatting, strict Clippy, all 43 tests, debug and ARM release builds pass. Signed
+bundle installed with recoverable backup and matching executable hash. Native macOS
+launch screenshot confirms rectangular activity controls and reader, restored header
+height and no extra reader frame/insets. Dark-mode interaction was not re-tested.
+
+## Format coverage and dotfiles (2026-10-10)
+49 tests pass, including grammar availability, extension aliases, EXR/HDR-to-PNG,
+bounded large-SVG rasterization, hidden text routing and bounded byte previews.
+A headless production reader test confirms byte previews reject keyboard edits,
+expose no save editor and remain clean. All required formatting, strict workspace
+Clippy, locked debug and ARM release builds pass.
+The opt-in audit opened/decoded 81 representative files across 19 formats from
+the requested directory; only aggregates were emitted, and hidden/credential
+files were excluded. Dotfiles used synthetic fixtures instead.
+The signed installed executable matches the release build; prior app is backed up.
+Existing user windows were retained. Native desktop interactions for these new
+formats remain unverified; relaunch is required to use the installed update.
+
+## 0.1.2 release
+Version 0.1.2 (bundle build 3) passes all four required checks and 49 tests.
+The ARM-only DMG was verified and mounted read-only; its bundle version, identifier,
+arm64 executable, strict ad-hoc signature and Applications shortcut were checked.
+Its executable matches the optimized release bundle and the installed application.
+The existing local app was backed up before replacement; active windows were preserved.
+DMG SHA-256: 90b861d923f262e1f849cd30dc8dbc7c7706c3a23be5b8c3da905e80003cb4fd.
+Native new-format interactions remain subject to the limitations above.

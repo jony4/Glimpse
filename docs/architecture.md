@@ -1,6 +1,6 @@
 # 架构约定
 
-Glimpse 是 macOS 查看器，负责 Markdown、代码、图片和 Git diff 阅读。文件内容只读，支持显式暂存/移出暂存，以及提交消息框的 ⌘Enter；提交仅包含 index，不提供克隆。
+Glimpse 是 macOS 查看器，负责 Markdown、代码、图片和 Git diff 阅读。普通 UTF-8 文件支持基础编辑和明确保存，Diff/图片仍只读；支持显式暂存/移出暂存，以及提交消息框的 ⌘Enter；提交仅包含 index，不提供克隆。
 
 ```text
 glimpse-app ──────> glimpse-services ──────> glimpse-core
@@ -32,7 +32,7 @@ glimpse-app ──────> glimpse-services ──────> glimpse-cor
 - Untracked：`git diff --no-index /dev/null <file>`，接受退出码 1 表示差异。
 - Conflict：`git diff --cc`，显示 Git 的 combined patch，不进行合并或解决冲突。
 
-通过 `Command` 参数调用，不使用 shell 字符串。强制字面 pathspec，禁用 pager、external diff、textconv、fsmonitor 和可选 index 锁；清理可能覆盖工作目录的 Git 环境变量。stdout 有 8 MiB 上限，stderr 独立读取；超限终止子进程并返回明确错误。UI 通过明确的文件/目录/分组按钮更新 index，提交消息框执行 commit。提交只包含 index，保留 hooks 和签名配置；不提供文件编辑、checkout 或冲突解决。
+通过 `Command` 参数调用，不使用 shell 字符串。强制字面 pathspec，禁用 pager、external diff、textconv、fsmonitor 和可选 index 锁；清理可能覆盖工作目录的 Git 环境变量。stdout 有 8 MiB 上限，stderr 独立读取；超限终止子进程并返回明确错误。UI 通过明确的文件/目录/分组按钮更新 index，提交消息框执行 commit。提交只包含 index，保留 hooks 和签名配置；不提供 checkout 或冲突解决。
 
 `core/split_diff` 将普通 unified patch 对齐为 Before/After 两列，保留原行号并补齐缺失行。`views/split_diff` 持有两侧编辑器和装饰，纵向滚动同步。普通 patch 默认双栏，Inline 仅展示 hunk 内容及增删标记；combined conflict patch 回退 Inline。
 
@@ -40,7 +40,7 @@ glimpse-app ──────> glimpse-services ──────> glimpse-cor
 
 Workspace 持有 Reader 标签列表、当前标签索引、标签栏滚动句柄、Explorer / Changes 实体、事件订阅、文件选择器任务和当前加载任务。新的读取替换旧任务，旧结果不能覆盖新选择；后台结果通过弱实体引用返回窗口。正在运行的同步 I/O 可能继续完成，但其结果不再被安装。
 
-Reader 持有长期存在的 EditorState，render 不新建编辑器、不做 I/O。文件和 diff 均在 state 与 renderer 两层启用只读。代码语言按扩展名映射，按需开启 Tree-sitter grammar，不接 LSP。Markdown 用 Kit 的 Base TextView（Component 初始化安装主题和代码块高亮），并把相对图片 URL 解析为本地路径。
+Reader 持有长期存在的 EditorState，render 不新建编辑器、不做 I/O。普通文件在 state 与 renderer 两层启用基础编辑；diff 两层均只读。代码语言按扩展名映射，按需开启 Tree-sitter grammar，不接 LSP。Markdown 用 Kit 的 Base TextView（Component 初始化安装主题和代码块高亮），并把相对图片 URL 解析为本地路径。
 
 `workspace/updates` 持有 native notify watcher，500 ms 合并事件，后台刷新目录缓存、仓库状态和所有打开标签；仅替换内容改变的 Reader，保留目录展开、阅读模式与滚动位置。单文件打开监听其父目录以覆盖原子替换，linked worktree 同时监听 Git 元数据目录。Git 写入期间延后自动刷新，完成后显式刷新。会话恢复尚未实现。
 
@@ -97,6 +97,8 @@ Material Icon Theme 文件图标固定上游版本，源 SVG、内嵌 PNG 和 MI
 
 Explorer 不设额外路径说明栏。目录展开时缓存每行的父行索引和子树结束位置；滚动时按当前布局偏移把已经离开顶部的祖先目录行绘制为吸顶行，与普通目录行复用缩进、箭头、层级竖线和点击逻辑。吸顶行覆盖原列表而不占用额外布局高度，切换到兄弟分支时旧祖先逐级退出；点击吸顶行可以收起并定位该目录。根目录只显示一次，仍可折叠。Changes 的目录/文件/组按钮选出相应 GitChange 集合，服务以字面路径批量执行，包含重命名旧路径，处理 unborn HEAD；“移出”只改变 index，绝不删除工作区文件。
 
+目录行、按钮和右键菜单的控件身份绑定路径，事件回调按路径解析当前行，避免目录加载/刷新后列表序号变化时复用其他行的交互状态。图标槽固定 16px，加载省略号与展开箭头不改变文件名起点；点击吸顶目录定位时为父级吸顶行保留偏移，防止收起后上跳一行。
+
 Issue 格式名优先使用非空扩展名；无扩展名时使用文件名本身（如 `.DS_Store`、`.env`、`README`），仍不携带父目录路径或文件内容。
 
 正式包名始终为 Glimpse.app，bundle identifier 为 io.github.jony4.glimpse；不为测试修改正式包名。
@@ -105,10 +107,33 @@ Issue 格式名优先使用非空扩展名；无扩展名时使用文件名本�
 
 双栏 diff 只转发当前接收用户输入一侧的纵向滚动。滚轮在 capture 阶段确定驱动侧，点击、拖动和键盘输入也会切换驱动侧。EditorState 在下一帧应用滚动位置；跟随侧的延迟通知、边界裁剪和初始化不再反向写回。横向位置独立保留，标题栏禁止压缩。
 
-SourceReader 使用独立编辑器列和固定 110px 缩略图列，不再使用编辑器右内边距预留空间。左侧面板默认 280px，禁止自动伸展，仍可在 180–420px 范围拖拽调整。
+SourceReader 使用独立编辑器列和固定 110px 缩略图列，不再使用编辑器右内边距预留空间。左侧面板默认 320px，禁止自动伸展，仍可在 180–420px 范围拖拽调整。
 
 连续同色 diff 行合并为高亮范围：双栏合并相邻范围，Inline 只跨单个换行合并，不跨上下文、颜色和 hunk 分隔。这样可减少长 diff 每帧扫描的装饰数量。
 
 启动窗口直接使用屏幕 visible_bounds 创建普通窗口，不再对已铺满的初始框架调用会切换尺寸的 macOS zoom。搜索框和下拉浮层均为 380px，以完整窗口宽度居中；前进/后退按钮绝对定位在输入框左侧，不参与居中计算。标题栏取消默认的单侧 80px 内边距。
 
 Dock 菜单复用 NewWindow 全局动作。Explorer 普通行、吸顶行、工作区根目录以及 Git 路径行共享路径菜单，提供 Finder 显示和相对/绝对路径复制；菜单操作绑定被点击行，不依赖正在阅读的文件。树行关闭按钮焦点描边，右键选择以行底色表示。
+
+## Basic text editing
+
+SourceReader retains an editable EditorState for ordinary text, with auto-closing pairs and smart indentation disabled. DiffReader and SplitDiff remain read-only. Input change events update the dirty flag against the saved baseline and refresh minimap data; rendering does not snapshot or write files. Markdown refreshes its preview and anchor map from the current buffer when entering Preview. Saving does not reset the editor, cursor or undo stack.
+
+`workspace/editing.rs` owns save/confirmation task handles. Save captures the editor identity, disk baseline and current text, then performs I/O on the background executor. Success advances the baseline to the captured text, preserving any newer edits. Pre-save refresh work is canceled, and refresh results never replace dirty or saving tabs. Tab/window close, replacing a project and the app's Quit action offer Cancel/Discard when drafts exist. The application tracks weak workspace references to guard Quit across all windows.
+
+`services/files::save_document` serializes local saves, resolves symlinks, checks the current content against the baseline, writes a same-directory temporary file, preserves permissions and syncs before replacement. It rechecks content before replacement and rejects read-only, deleted, externally modified or oversized files. Atomic replacement prevents truncation on failure; it does not provide a cross-process filesystem transaction, preserve hard-link identity or recover from force-quit. No new-document/Save As/session-draft recovery flow is added.
+
+### Dock artwork
+Dock-only artwork uses a brighter tile and 16% larger internal mark, not a larger
+silhouette. Window chrome retains the original opaque, rectangular layout; no
+experimental glass surfaces, rounded reader frames or additional panel insets remain.
+
+## Format coverage and hidden-file inspection
+Core owns filename-to-language routing. Java/SQL/Make use enabled toolkit grammars;
+Vue/XML, shader and Cython aliases provide basic highlighting only. Services own
+EXR/HDR-to-SDR decoding and bounded SVG rasterization. Rendering performs no I/O.
+services/binary.rs adds bounded raw-byte previews for dotfiles that cannot use the
+text/image readers. Workspace background loading routes these to Renderer::Bytes,
+which retains a read-only SourceReader but exposes no save editor or dirty state.
+It is separate from editable Source and read-only Diff despite sharing presentation.
+See file-format-support.md for coverage, limits and deferred dedicated viewers.

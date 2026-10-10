@@ -4,7 +4,7 @@ default-members = ["crates/glimpse-app"]
 resolver = "3"
 
 [workspace.package]
-version = "0.1.1"
+version = "0.1.2"
 edition = "2024"
 publish = false
 license = "MIT"
@@ -19,6 +19,7 @@ gpui-kit = { version = "=0.7.1", features = [
     "tree-sitter-c", "tree-sitter-cpp", "tree-sitter-css", "tree-sitter-html",
     "tree-sitter-yaml", "tree-sitter-bash", "tree-sitter-swift",
     "tree-sitter-markdown", "tree-sitter-markdown-inline", "tree-sitter-diff",
+    "tree-sitter-java", "tree-sitter-sql", "tree-sitter-make",
 ] }
 anyhow = "1"
 

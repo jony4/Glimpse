@@ -1,4 +1,12 @@
 gpui_kit::actions!(
     glimpse,
-    [NewWindow, Quit, OpenFile, OpenFolder, Refresh, CloseWindow]
+    [
+        NewWindow,
+        Quit,
+        OpenFile,
+        OpenFolder,
+        SaveFile,
+        Refresh,
+        CloseWindow
+    ]
 );

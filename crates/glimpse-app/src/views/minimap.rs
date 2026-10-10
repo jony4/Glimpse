@@ -54,6 +54,30 @@ impl Minimap {
         }
     }
 
+    pub fn set_text(&mut self, text: &str, is_diff: bool, cx: &mut Context<Self>) {
+        self.lines = Arc::new(
+            text.split('\n')
+                .map(|line| {
+                    let indent = line
+                        .chars()
+                        .take_while(|c| c.is_whitespace())
+                        .count()
+                        .min(100);
+                    let width = line.chars().take(120).count().saturating_sub(indent);
+                    let change = if is_diff && line.starts_with('+') {
+                        1
+                    } else if is_diff && line.starts_with('-') {
+                        -1
+                    } else {
+                        0
+                    };
+                    (indent as u8, width as u8, change)
+                })
+                .collect(),
+        );
+        cx.notify();
+    }
+
     pub fn set_preview(&mut self, preview: bool, cx: &mut Context<Self>) {
         if self.preview != preview {
             self.preview = preview;

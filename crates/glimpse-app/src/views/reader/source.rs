@@ -3,12 +3,16 @@ use glimpse_core::DiffSpan;
 use gpui_kit::{
     component::{
         ActiveTheme,
-        input::{Editor, EditorState, TextDecoration, TextDecorationCollection},
+        input::{Editor, EditorState, InputEvent, TextDecoration, TextDecorationCollection},
     },
     *,
 };
+use std::{
+    cell::{Cell, RefCell},
+    rc::Rc,
+};
 
-/// Shared read-only editor surface for code, JSON and inline diffs.
+/// Shared basic editor surface for text/code; inline diffs remain read-only.
 /// Native gutter, folding and scrollbars share the editor's layout frame.
 pub(super) struct SourceReader {
     pub state: Entity<EditorState>,
@@ -16,6 +20,10 @@ pub(super) struct SourceReader {
     spans: Vec<DiffSpan>,
     marks: Option<TextDecorationCollection>,
     palette: Option<(Hsla, Hsla)>,
+    readonly: bool,
+    baseline: Rc<RefCell<String>>,
+    dirty: Rc<Cell<bool>>,
+    _edit_subscription: Subscription,
 }
 impl SourceReader {
     pub fn new(
@@ -30,24 +38,53 @@ impl SourceReader {
         let state = cx.new(|cx| {
             let mut state = EditorState::new(window, cx)
                 .language(language)
+                .auto_close(false)
+                .smart_indent(false)
                 .line_number(!diff)
                 .folding(!diff)
                 .soft_wrap(false)
                 .scroll_beyond_last_line(Some(0));
             state.set_value(text.to_owned(), window, cx);
-            state.set_readonly(true, cx);
+            state.set_readonly(diff, cx);
             state
         });
         let minimap = cx.new(|cx| Minimap::new(state.clone(), text, diff, scroll, cx));
         let marks =
             diff.then(|| state.update(cx, |s, cx| s.create_decorations_collection(Vec::new(), cx)));
+        let baseline = Rc::new(RefCell::new(state.read(cx).value().to_string()));
+        let dirty = Rc::new(Cell::new(false));
+        let saved = baseline.clone();
+        let changed = dirty.clone();
+        let map = minimap.clone();
+        let subscription = cx.subscribe(&state, move |state, event, cx| {
+            if matches!(event, InputEvent::Change) {
+                let text = state.read(cx).value().to_string();
+                let dirty = text != *saved.borrow();
+                let previous = changed.replace(dirty);
+                map.update(cx, |map, cx| map.set_text(&text, diff, cx));
+                if previous != dirty {
+                    cx.refresh_windows();
+                }
+            }
+        });
         Self {
+            readonly: diff,
+            baseline,
+            dirty,
+            _edit_subscription: subscription,
             state,
             minimap,
             spans: compact_spans(text, spans),
             marks,
             palette: None,
         }
+    }
+    pub fn is_dirty(&self) -> bool {
+        !self.readonly && self.dirty.get()
+    }
+    pub fn mark_saved(&mut self, text: String, cx: &App) {
+        self.dirty.set(self.state.read(cx).value().as_ref() != text);
+        *self.baseline.borrow_mut() = text;
     }
     pub fn inherit(&mut self, old: &Self, cx: &mut App) {
         let offset = old.state.read(cx).scroll_offset();
@@ -94,7 +131,7 @@ impl SourceReader {
                     .overflow_hidden()
                     .child(
                         Editor::new(&self.state)
-                            .readonly(true)
+                            .readonly(self.readonly)
                             .appearance(false)
                             .bordered(false)
                             .size_full(),
@@ -157,5 +194,20 @@ mod tests {
                 ("+另一区块", true)
             ]
         );
+    }
+}
+
+#[cfg(test)]
+mod format_registry_tests {
+    #[test]
+    fn new_source_formats_have_compiled_grammars() {
+        let registry = gpui_kit::component::highlighter::LanguageRegistry::singleton();
+        for name in ["java", "sql", "make", "html", "c", "cpp", "python", "json"] {
+            let grammar = registry
+                .language(name)
+                .expect("enabled grammar must be registered");
+            assert!(grammar.language.is_some(), "{name}");
+            assert!(!grammar.highlights.is_empty(), "{name}");
+        }
     }
 }

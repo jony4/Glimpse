@@ -34,8 +34,14 @@ pub fn language_for_path(path: &Path) -> &'static str {
         .file_name()
         .and_then(|s| s.to_str())
         .unwrap_or_default();
-    if matches!(name, "Dockerfile" | "Makefile") {
-        return "plain";
+    if matches!(name, "Makefile" | "GNUmakefile" | "makefile") {
+        return "make";
+    }
+    if matches!(name, ".bashrc" | ".bash_profile" | ".zshrc" | ".zprofile") {
+        return "bash";
+    }
+    if matches!(name, ".eslintrc" | ".babelrc" | ".czrc") {
+        return "json";
     }
     match path
         .extension()
@@ -48,19 +54,49 @@ pub fn language_for_path(path: &Path) -> &'static str {
         "js" | "mjs" | "cjs" | "jsx" => "javascript",
         "ts" | "mts" | "cts" => "typescript",
         "tsx" => "tsx",
-        "json" | "jsonc" => "json",
+        "json" | "jsonc" | "jsonl" | "code-workspace" | "tsbuildinfo" => "json",
         "toml" => "toml",
-        "py" | "pyi" => "python",
+        "py" | "pyi" | "pyx" | "pxd" => "python",
         "go" => "go",
         "c" | "h" => "c",
-        "cpp" | "cc" | "cxx" | "hpp" => "cpp",
-        "css" => "css",
-        "html" | "htm" => "html",
-        "yml" | "yaml" => "yaml",
-        "sh" | "bash" | "zsh" => "bash",
+        "cpp" | "cc" | "cxx" | "hpp" | "hh" | "hxx" | "cu" | "cuh" | "metal" => "cpp",
+        "css" | "less" => "css",
+        // HTML provides basic tag highlighting, not full Vue/XML language semantics.
+        "html" | "htm" | "vue" | "xml" | "mtlx" | "tmx" | "hbs" => "html",
+        "yml" | "yaml" | "ocio" => "yaml",
+        "sh" | "bash" | "zsh" | "command" => "bash",
         "swift" => "swift",
+        "java" => "java",
+        "sql" => "sql",
+        "mk" => "make",
+        // C-like syntax only; these retain shader-specific tokens as plain text.
+        "glsl" | "vert" | "frag" | "geom" | "osl" => "c",
         "md" | "markdown" => "markdown",
         "diff" | "patch" => "diff",
         _ => "plain",
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    #[test]
+    fn recognizes_source_aliases_without_misclassifying_unknown_files() {
+        for (path, language) in [
+            ("Main.JAVA", "java"),
+            ("schema.sql", "sql"),
+            ("Component.vue", "html"),
+            ("material.mtlx", "html"),
+            ("shader.glsl", "c"),
+            ("kernel.cu", "cpp"),
+            ("types.pxd", "python"),
+            ("events.jsonl", "json"),
+            ("Makefile", "make"),
+            (".zshrc", "bash"),
+            ("table.csv", "plain"),
+            ("unknown.blend", "plain"),
+        ] {
+            assert_eq!(language_for_path(Path::new(path)), language, "{path}");
+        }
     }
 }

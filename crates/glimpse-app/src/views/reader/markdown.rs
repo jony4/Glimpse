@@ -9,7 +9,7 @@ use std::{cell::Cell, collections::HashMap, ops::Range, path::Path, rc::Rc};
 pub(super) struct MarkdownReader {
     pub source: SourceReader,
     pub preview: bool,
-    state: Entity<TextViewState>,
+    pub(super) state: Entity<TextViewState>,
     pub scroll: ScrollHandle,
     base: url::Url,
     headings: HashMap<String, Range<usize>>,
@@ -47,6 +47,11 @@ impl MarkdownReader {
             headings: headings(text),
             pending_anchor: None,
         }
+    }
+    pub fn sync_preview(&mut self, cx: &mut App) {
+        let text = self.source.state.read(cx).value().to_string();
+        self.headings = headings(&text);
+        self.state.update(cx, |s, cx| s.set_text(&text, cx));
     }
     pub fn reveal(&mut self, anchor: &str) {
         self.preview = true;

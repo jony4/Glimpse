@@ -17,5 +17,9 @@ gpui-kit.workspace = true
 anyhow.workspace = true
 url = "2"
 
+[dev-dependencies]
+gpui-kit = { workspace = true, features = ["test-support"] }
+tempfile = "3"
+
 [lints]
 workspace = true

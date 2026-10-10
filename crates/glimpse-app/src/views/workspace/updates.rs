@@ -58,7 +58,7 @@ impl Workspace {
         }));
     }
     pub(super) fn refresh(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        if self.refresh_task.is_some() || self.repository_task.is_some() {
+        if self.refresh_task.is_some() || self.repository_task.is_some() || self.is_saving() {
             return;
         }
         let root = self.root.clone();
@@ -106,10 +106,15 @@ impl Workspace {
                         }) else {
                             continue;
                         };
+                        // Never replace a draft, even if this refresh started before typing.
+                        if view.tabs[index].is_dirty() || view.is_saving() {
+                            continue;
+                        }
                         let unchanged = match &content {
                             Content::File(d) => view.tabs[index].snapshot == d.text,
                             Content::Image(d) => view.tabs[index].snapshot == d.fingerprint,
                             Content::Diff(d, _) => view.tabs[index].snapshot == d.patch,
+                            Content::Bytes(d) => view.tabs[index].snapshot == d.text,
                             Content::Unavailable(_, _) => false,
                         };
                         if unchanged && !view.tabs[index].is_unavailable() {

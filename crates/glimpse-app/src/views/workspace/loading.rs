@@ -1,4 +1,4 @@
-use super::{Sidebar, Workspace};
+use super::Workspace;
 use crate::views::{
     changes::{ChangeSelected, Changes},
     explorer::{Explorer, ExplorerEvent},
@@ -19,6 +19,7 @@ enum Opened {
 }
 pub(super) enum Content {
     File(Document),
+    Bytes(glimpse_services::binary::BytePreview),
     Image(glimpse_services::media::ImageDocument),
     Diff(DiffDocument, PathBuf),
     Unavailable(PathBuf, String),
@@ -52,12 +53,7 @@ impl Workspace {
                 view.loading = false;
                 match result {
                     Ok(Opened::Folder(folder)) => {
-                        view.tabs.clear();
-                        view.active = None;
-                        view.history.clear();
-                        view.history_cursor = None;
-                        view.sidebar = Sidebar::Files;
-                        view.install_folder(folder, window, cx);
+                        view.receive_folder(folder, window, cx);
                     }
                     Ok(Opened::File(_, Ok(document))) => view.install_content(document, window, cx),
                     Ok(Opened::File(path, Err(error))) => view.install_content(
@@ -72,7 +68,7 @@ impl Workspace {
         }));
         cx.notify();
     }
-    fn install_folder(
+    pub(super) fn install_folder(
         &mut self,
         snapshot: FolderSnapshot,
         window: &mut Window,
@@ -147,6 +143,7 @@ impl Workspace {
     pub(super) fn make_reader(content: Content, window: &mut Window, cx: &mut App) -> Reader {
         match content {
             Content::File(d) => Reader::new(d, window, cx),
+            Content::Bytes(d) => Reader::from_bytes(d, window, cx),
             Content::Image(d) => Reader::from_image(d, window, cx),
             Content::Diff(d, r) => Reader::from_diff(d, &r, window, cx),
             Content::Unavailable(p, e) => Reader::unavailable(p, e, window, cx),
@@ -242,9 +239,36 @@ impl Workspace {
 }
 
 pub(super) fn read_content(path: &std::path::Path) -> anyhow::Result<Content> {
-    if glimpse_services::media::supports(path) {
+    let result = if glimpse_services::media::supports(path) {
         glimpse_services::media::read_image(path).map(Content::Image)
     } else {
         read_document(path).map(Content::File)
+    };
+    if result.is_err()
+        && path
+            .file_name()
+            .and_then(|n| n.to_str())
+            .is_some_and(|n| n.starts_with('.'))
+    {
+        glimpse_services::binary::read_preview(path).map(Content::Bytes)
+    } else {
+        result
+    }
+}
+
+#[cfg(test)]
+mod format_tests {
+    use super::{Content, read_content};
+    #[test]
+    fn dotfiles_are_routed_by_content_not_missing_extension() {
+        let dir = tempfile::tempdir().unwrap();
+        for name in [".env", ".npmrc", ".gitignore", ".config.local"] {
+            let path = dir.path().join(name);
+            std::fs::write(&path, "EXAMPLE=value\n").unwrap();
+            assert!(matches!(read_content(&path).unwrap(), Content::File(_)));
+        }
+        let binary = dir.path().join(".DS_Store");
+        std::fs::write(&binary, [0, 1, 2, 255]).unwrap();
+        assert!(matches!(read_content(&binary).unwrap(), Content::Bytes(_)));
     }
 }

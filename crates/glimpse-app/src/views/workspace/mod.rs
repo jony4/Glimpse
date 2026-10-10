@@ -1,3 +1,4 @@
+mod editing;
 mod header;
 mod loading;
 mod render;
@@ -44,6 +45,9 @@ pub struct Workspace {
     loading: bool,
     load_task: Option<Task<()>>,
     picker_task: Option<Task<()>>,
+    save_task: Option<Task<()>>,
+    saving: Option<EntityId>,
+    confirm_task: Option<Task<()>>,
 }
 
 impl Workspace {
@@ -56,6 +60,18 @@ impl Workspace {
             if matches!(event, InputEvent::Change) {
                 view.search_files(window, cx);
             }
+        });
+        let weak = cx.entity().downgrade();
+        window.on_window_should_close(cx, move |window, cx| {
+            weak.update(cx, |v, cx| {
+                if v.has_unsaved() || v.is_saving() {
+                    v.request_close_window(window, cx);
+                    false
+                } else {
+                    true
+                }
+            })
+            .unwrap_or(true)
         });
         let mut workspace = Self {
             history: Vec::new(),
@@ -85,6 +101,9 @@ impl Workspace {
             loading: false,
             load_task: None,
             picker_task: None,
+            save_task: None,
+            saving: None,
+            confirm_task: None,
         };
         if let Some(path) = path {
             workspace.open_path(path, window, cx);

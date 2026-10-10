@@ -7,3 +7,5 @@ pub mod workspace;
 pub mod watch;
 
 pub mod media;
+
+pub mod binary;

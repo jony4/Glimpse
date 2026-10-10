@@ -17,6 +17,7 @@ pub type OpenLink = Arc<dyn Fn(PathBuf, Option<String>, &mut Window, &mut App) +
 /// syntax-aware folding; Markdown owns preview state as well as a source editor.
 enum Renderer {
     Source(SourceReader),
+    Bytes(SourceReader),
     Markdown(MarkdownReader),
     Diff(DiffReader),
     Image(ImageReader),
@@ -57,6 +58,29 @@ impl Reader {
             repository_root: None,
             diff: None,
             renderer,
+        }
+    }
+    pub fn from_bytes(
+        document: glimpse_services::binary::BytePreview,
+        window: &mut Window,
+        cx: &mut App,
+    ) -> Self {
+        let source = SourceReader::new(
+            &document.text,
+            "plain",
+            true,
+            Vec::new(),
+            ScrollHandle::new(),
+            window,
+            cx,
+        );
+        Self {
+            title: document.path.display().to_string().into(),
+            path: document.path,
+            snapshot: document.text,
+            repository_root: None,
+            diff: None,
+            renderer: Renderer::Bytes(source),
         }
     }
     pub fn from_diff(
@@ -113,15 +137,41 @@ impl Reader {
     }
     fn source(&self) -> Option<&SourceReader> {
         match &self.renderer {
-            Renderer::Source(s) => Some(s),
+            Renderer::Source(s) | Renderer::Bytes(s) => Some(s),
             Renderer::Markdown(m) => Some(&m.source),
             Renderer::Diff(d) => Some(&d.source),
             _ => None,
         }
     }
+    pub fn editor(&self) -> Option<Entity<gpui_kit::component::input::EditorState>> {
+        if self.diff.is_some() {
+            return None;
+        }
+        match &self.renderer {
+            Renderer::Source(s) => Some(s.state.clone()),
+            Renderer::Markdown(m) => Some(m.source.state.clone()),
+            _ => None,
+        }
+    }
+    pub fn is_dirty(&self) -> bool {
+        match &self.renderer {
+            Renderer::Source(s) => s.is_dirty(),
+            Renderer::Markdown(m) => m.source.is_dirty(),
+            _ => false,
+        }
+    }
+    pub fn mark_saved(&mut self, text: String, cx: &App) {
+        self.snapshot = text.clone();
+        match &mut self.renderer {
+            Renderer::Source(s) => s.mark_saved(text, cx),
+            Renderer::Markdown(m) => m.source.mark_saved(text, cx),
+            _ => {}
+        }
+    }
     pub fn inherit_view(&mut self, old: &Self, cx: &mut App) {
         match (&mut self.renderer, &old.renderer) {
-            (Renderer::Source(s), Renderer::Source(o)) => s.inherit(o, cx),
+            (Renderer::Source(s), Renderer::Source(o))
+            | (Renderer::Bytes(s), Renderer::Bytes(o)) => s.inherit(o, cx),
             (Renderer::Markdown(s), Renderer::Markdown(o)) => {
                 s.source.inherit(&o.source, cx);
                 s.preview = o.preview;
@@ -146,8 +196,11 @@ impl Reader {
     pub fn can_preview(&self) -> bool {
         matches!(self.renderer, Renderer::Markdown(_))
     }
-    pub fn set_preview(&mut self, preview: bool) {
+    pub fn set_preview(&mut self, preview: bool, cx: &mut App) {
         if let Renderer::Markdown(m) = &mut self.renderer {
+            if preview {
+                m.sync_preview(cx);
+            }
             m.preview = preview;
         }
     }
@@ -171,6 +224,7 @@ impl Reader {
     }
     pub fn reveal_anchor(&mut self, anchor: &str, cx: &mut App) {
         if let Renderer::Markdown(m) = &mut self.renderer {
+            m.sync_preview(cx);
             m.reveal(anchor);
         } else if let Some(source) = self.source()
             && let Some(line) = anchor
@@ -186,11 +240,159 @@ impl Reader {
     }
     pub fn render(&mut self, open: OpenLink, cx: &mut App) -> AnyElement {
         match &mut self.renderer {
-            Renderer::Source(s) => s.render(cx),
+            Renderer::Source(s) | Renderer::Bytes(s) => s.render(cx),
             Renderer::Markdown(m) => m.render(open, cx),
             Renderer::Diff(d) => d.render(cx),
             Renderer::Image(i) => i.render(),
             Renderer::Unavailable(e) => e.render(cx),
         }
+    }
+}
+
+#[cfg(test)]
+mod editing_tests {
+    use super::{Reader, Renderer};
+    use glimpse_core::{DiffDocument, DiffScope, Document, DocumentKind, GitChange};
+    use gpui_kit::{
+        App, AppContext, Bounds, Context, Entity, IntoElement, Point, Render, TestAppContext,
+        Window, WindowBounds, WindowOptions, px, size, test::TestWindowExt,
+    };
+
+    struct Fixture(Reader);
+    impl Render for Fixture {
+        fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+            self.0.render(std::sync::Arc::new(|_, _, _, _| {}), cx)
+        }
+    }
+    fn open(
+        cx: &mut TestAppContext,
+        build: impl FnOnce(&mut Window, &mut App) -> Reader,
+    ) -> (gpui_kit::AnyWindowHandle, Entity<Fixture>) {
+        cx.update(gpui_kit::init);
+        cx.update(|cx| {
+            gpui_kit::open_window(
+                WindowOptions {
+                    window_bounds: Some(WindowBounds::Windowed(Bounds {
+                        origin: Point::default(),
+                        size: size(px(900.), px(600.)),
+                    })),
+                    ..Default::default()
+                },
+                cx,
+                |window, cx| cx.new(|cx| Fixture(build(window, cx))),
+            )
+            .unwrap()
+        })
+    }
+    #[gpui_kit::test]
+    fn markdown_preview_uses_unsaved_edits(cx: &mut TestAppContext) {
+        let (handle, view) = open(cx, |window, cx| {
+            let mut reader = Reader::new(
+                Document {
+                    path: "/tmp/test-note.md".into(),
+                    kind: DocumentKind::Markdown,
+                    text: "# Original\n".into(),
+                },
+                window,
+                cx,
+            );
+            reader.set_preview(false, cx);
+            reader
+        });
+        let editor = cx.update(|cx| view.read(cx).0.editor().unwrap());
+        cx.update_window(handle, |_, window, cx| {
+            window.render_frame(cx);
+            window.click(("input", editor.entity_id()), cx);
+            window.press("cmd-a", cx);
+            window.input("# Edited heading\n", cx);
+        })
+        .unwrap();
+        cx.run_until_parked();
+        assert!(cx.update(|cx| view.read(cx).0.is_dirty()));
+        cx.update(|cx| view.update(cx, |v, cx| v.0.set_preview(true, cx)));
+        cx.run_until_parked();
+        cx.update(|cx| {
+            let Renderer::Markdown(markdown) = &view.read(cx).0.renderer else {
+                unreachable!()
+            };
+            assert_eq!(
+                markdown.source.state.read(cx).value().as_ref(),
+                "# Edited heading\n"
+            );
+            assert!(
+                markdown
+                    .state
+                    .read(cx)
+                    .rendered_text()
+                    .as_str()
+                    .contains("Edited heading")
+            );
+            assert_eq!(view.read(cx).0.snapshot, "# Original\n");
+        });
+    }
+    #[gpui_kit::test]
+    fn byte_preview_rejects_typing_and_has_no_save_buffer(cx: &mut TestAppContext) {
+        let (handle, view) = open(cx, |window, cx| {
+            Reader::from_bytes(
+                glimpse_services::binary::BytePreview {
+                    path: "/tmp/.DS_Store".into(),
+                    text: "00000000  00 ff 41".into(),
+                },
+                window,
+                cx,
+            )
+        });
+        let editor = cx.update(|cx| view.read(cx).0.source().unwrap().state.clone());
+        let original = cx.update(|cx| editor.read(cx).value());
+        cx.update_window(handle, |_, window, cx| {
+            window.render_frame(cx);
+            window.click(("input", editor.entity_id()), cx);
+            window.press("cmd-a", cx);
+            window.input("must not overwrite binary bytes", cx);
+        })
+        .unwrap();
+        cx.run_until_parked();
+        cx.update(|cx| {
+            assert_eq!(editor.read(cx).value(), original);
+            assert!(view.read(cx).0.editor().is_none());
+            assert!(!view.read(cx).0.is_dirty());
+        });
+    }
+
+    #[gpui_kit::test]
+    fn diff_rejects_typing_and_has_no_save_buffer(cx: &mut TestAppContext) {
+        let (handle, view) = open(cx, |window, cx| {
+            let mut reader = Reader::from_diff(
+                DiffDocument {
+                    change: GitChange {
+                        path: "text.txt".into(),
+                        original_path: None,
+                        scope: DiffScope::Worktree,
+                        status: 'M',
+                    },
+                    patch: "@@ -1 +1 @@\n-old\n+new\n".into(),
+                },
+                std::path::Path::new("/tmp"),
+                window,
+                cx,
+            );
+            reader.set_side_by_side(false);
+            reader
+        });
+        let editor = cx.update(|cx| view.read(cx).0.source().unwrap().state.clone());
+        let original = cx.update(|cx| editor.read(cx).value());
+        cx.update_window(handle, |_, window, cx| {
+            window.render_frame(cx);
+            window.click(("input", editor.entity_id()), cx);
+            window.press("cmd-a", cx);
+            window.input("must not replace the diff", cx);
+        })
+        .unwrap();
+        cx.run_until_parked();
+        cx.update(|cx| {
+            assert_eq!(editor.read(cx).value(), original);
+            assert!(view.read(cx).0.editor().is_none());
+            assert!(!view.read(cx).0.is_dirty());
+        });
     }
 }

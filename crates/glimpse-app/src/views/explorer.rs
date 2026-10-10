@@ -6,6 +6,7 @@ use std::{
 use glimpse_core::DirectoryEntry;
 use glimpse_services::workspace::list_directory;
 use gpui_kit::{
+    base::TestSupportExt,
     component::{
         ActiveTheme, FocusableExt,
         button::{Button, ButtonCustomVariant, ButtonVariants},
@@ -173,6 +174,24 @@ impl Explorer {
         cx.notify();
     }
 
+    fn activate_path(
+        &mut self,
+        path: &std::path::Path,
+        sticky: bool,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(index) = self.rows.iter().position(|row| row.entry.path == path) else {
+            return;
+        };
+        let depth = self.rows[index].depth;
+        self.activate(index, window, cx);
+        if sticky {
+            self.scroll
+                .scroll_to_item_strict_with_offset(index, ScrollStrategy::Top, depth);
+        }
+    }
+
     fn render_row(&self, index: usize, sticky: bool, cx: &mut Context<Self>) -> AnyElement {
         let row = &self.rows[index];
         let marker = if self.tasks.contains_key(&row.entry.path) {
@@ -189,15 +208,23 @@ impl Explorer {
             .unwrap_or_default()
             .to_string_lossy()
             .into_owned();
+        let row_path = row.entry.path.clone();
+        let right_click_path = row_path.clone();
         let menu_path = row.entry.path.clone();
         let menu_root = self.root.clone();
         div()
-            .id((if sticky { "sticky-row" } else { "tree-row" }, index))
+            .id(entry_id(
+                &row.entry.path,
+                if sticky { "sticky-row" } else { "tree-row" },
+            ))
             .relative()
             .on_mouse_down(
                 MouseButton::Right,
                 cx.listener(move |view, _, window, cx| {
-                    view.selected = Some(index);
+                    view.selected = view
+                        .rows
+                        .iter()
+                        .position(|r| r.entry.path == right_click_path);
                     window.focus(&view.focus, cx);
                     cx.notify();
                 }),
@@ -215,42 +242,64 @@ impl Explorer {
                     .absolute()
                     .top_0()
                     .bottom_0()
-                    .left(px(18. + level as f32 * 14.))
+                    .left(px(26. + level as f32 * 14.))
                     .w(px(1.))
                     .bg(cx.theme().border)
             }))
             .pl(px(8. + row.depth as f32 * 14.))
             .pr_2()
             .child(
-                Button::new((if sticky { "sticky-entry" } else { "entry" }, index))
-                    .custom(ButtonCustomVariant::new(cx))
-                    .focus_ring(false)
-                    .accessibility_label(format!(
-                        "{}  {name}",
-                        if row.entry.is_dir { marker } else { "·" }
-                    ))
-                    .child(
-                        div().w_full().text_left().truncate().child(
-                            gpui_kit::component::h_flex()
-                                .gap_2()
-                                .child(if row.entry.is_dir {
-                                    div().child(marker).into_any_element()
-                                } else {
-                                    super::file_icons::file_icon(&row.entry.path).into_any_element()
-                                })
-                                .child(name),
-                        ),
-                    )
-                    .w_full()
-                    .h(px(ROW_HEIGHT))
-                    .justify_start()
-                    .on_click(cx.listener(move |view, _, window, cx| {
-                        view.activate(index, window, cx);
-                        if sticky {
-                            view.scroll
-                                .scroll_to_item_strict(index, ScrollStrategy::Top);
-                        }
-                    })),
+                Button::new(entry_id(
+                    &row.entry.path,
+                    if sticky { "sticky-entry" } else { "entry" },
+                ))
+                .custom(ButtonCustomVariant::new(cx))
+                .focus_ring(false)
+                .accessibility_label(format!(
+                    "{}  {name}",
+                    if row.entry.is_dir { marker } else { "·" }
+                ))
+                .child(
+                    div().w_full().text_left().truncate().child(
+                        gpui_kit::component::h_flex()
+                            .w_full()
+                            .min_w_0()
+                            .gap_2()
+                            .child(
+                                div()
+                                    .w(px(16.))
+                                    .h(px(16.))
+                                    .flex_shrink_0()
+                                    .flex()
+                                    .items_center()
+                                    .justify_center()
+                                    .child(if row.entry.is_dir {
+                                        div().child(marker).into_any_element()
+                                    } else {
+                                        super::file_icons::file_icon(&row.entry.path)
+                                            .into_any_element()
+                                    }),
+                            )
+                            .child(
+                                div()
+                                    .id(entry_id(
+                                        &row.entry.path,
+                                        if sticky { "sticky-label" } else { "label" },
+                                    ))
+                                    .flex_1()
+                                    .min_w_0()
+                                    .truncate()
+                                    .child(name)
+                                    .test_support(),
+                            ),
+                    ),
+                )
+                .w_full()
+                .h(px(ROW_HEIGHT))
+                .justify_start()
+                .on_click(cx.listener(move |view, _, window, cx| {
+                    view.activate_path(&row_path, sticky, window, cx);
+                })),
             )
             .context_menu(move |menu, _, _| path_menu(menu, &menu_path, &menu_root))
             .into_any_element()
@@ -403,6 +452,13 @@ pub(super) fn path_menu(
     )
 }
 
+fn entry_id(path: &std::path::Path, part: &'static str) -> ElementId {
+    ElementId::NamedChild(
+        std::sync::Arc::new(ElementId::Path(path.into())),
+        part.into(),
+    )
+}
+
 const ROW_HEIGHT: f32 = 32.;
 
 /// Pin only real expanded ancestor rows that have crossed their tree slot.
@@ -511,5 +567,224 @@ mod tests {
         ];
         assert!(sticky_rows(&rows, 8., 320.).is_empty());
         assert!(sticky_rows(&[], 100., 320.).is_empty());
+    }
+}
+
+#[cfg(test)]
+mod interaction_tests {
+    use super::{Explorer, entry_id};
+    use glimpse_core::DirectoryEntry;
+    use gpui_kit::{
+        AppContext, Bounds, Point, TestAppContext, WindowBounds, WindowOptions, px, size,
+        test::TestWindowExt,
+    };
+
+    #[gpui_kit::test]
+    fn loading_arrow_and_expanded_arrow_keep_label_in_place(cx: &mut TestAppContext) {
+        let path = std::path::PathBuf::from("/fixture/folder");
+        cx.update(gpui_kit::init);
+        let (handle, view) = cx.update(|cx| {
+            gpui_kit::open_window(
+                WindowOptions {
+                    window_bounds: Some(WindowBounds::Windowed(Bounds {
+                        origin: Point::default(),
+                        size: size(px(400.), px(500.)),
+                    })),
+                    ..Default::default()
+                },
+                cx,
+                |_, cx| {
+                    cx.new(|cx| {
+                        Explorer::new(
+                            "/fixture".into(),
+                            vec![DirectoryEntry {
+                                path: path.clone(),
+                                is_dir: true,
+                                is_symlink: false,
+                            }],
+                            cx,
+                        )
+                    })
+                },
+            )
+            .unwrap()
+        });
+        let before = cx
+            .update_window(handle, |_, window, cx| {
+                window.render_frame(cx);
+                window.find(entry_id(&path, "label")).bounds()
+            })
+            .unwrap();
+        cx.update(|cx| {
+            view.update(cx, |v, cx| {
+                v.tasks.insert(
+                    path.clone(),
+                    cx.spawn(async |_, _| std::future::pending::<()>().await),
+                );
+                v.expanded.insert(path.clone());
+                cx.notify();
+            })
+        });
+        let loading = cx
+            .update_window(handle, |_, window, cx| {
+                window.render_frame(cx);
+                window.find(entry_id(&path, "label")).bounds()
+            })
+            .unwrap();
+        cx.update(|cx| {
+            view.update(cx, |v, cx| {
+                v.tasks.clear();
+                cx.notify();
+            })
+        });
+        let expanded = cx
+            .update_window(handle, |_, window, cx| {
+                window.render_frame(cx);
+                window.find(entry_id(&path, "label")).bounds()
+            })
+            .unwrap();
+        assert_eq!(
+            before, loading,
+            "loading marker must not shift the filename"
+        );
+        assert_eq!(
+            before, expanded,
+            "disclosure state must not shift the filename"
+        );
+    }
+    #[gpui_kit::test]
+    fn clicking_sticky_folder_keeps_it_below_pinned_parent(cx: &mut TestAppContext) {
+        let parent = std::path::PathBuf::from("/fixture/parent");
+        let branch = parent.join("branch");
+        let file = |path| DirectoryEntry {
+            path,
+            is_dir: false,
+            is_symlink: false,
+        };
+        cx.update(gpui_kit::init);
+        let (handle, view) = cx.update(|cx| {
+            gpui_kit::open_window(
+                WindowOptions {
+                    window_bounds: Some(WindowBounds::Windowed(Bounds {
+                        origin: Point::default(),
+                        size: size(px(400.), px(500.)),
+                    })),
+                    ..Default::default()
+                },
+                cx,
+                |_, cx| {
+                    cx.new(|cx| {
+                        let mut view = Explorer::new(
+                            "/fixture".into(),
+                            vec![DirectoryEntry {
+                                path: parent.clone(),
+                                is_dir: true,
+                                is_symlink: false,
+                            }],
+                            cx,
+                        );
+                        let mut siblings = (0..30)
+                            .map(|i| file(parent.join(format!("before-{i}"))))
+                            .collect::<Vec<_>>();
+                        siblings.push(DirectoryEntry {
+                            path: branch.clone(),
+                            is_dir: true,
+                            is_symlink: false,
+                        });
+                        siblings.extend((0..100).map(|i| file(parent.join(format!("after-{i}")))));
+                        view.directories.insert(parent.clone(), siblings);
+                        view.directories.insert(
+                            branch.clone(),
+                            (0..10)
+                                .map(|i| file(branch.join(format!("file-{i}"))))
+                                .collect(),
+                        );
+                        view.expanded.extend([parent.clone(), branch.clone()]);
+                        view.rebuild();
+                        view
+                    })
+                },
+            )
+            .unwrap()
+        });
+        cx.update_window(handle, |_, window, cx| window.render_frame(cx))
+            .unwrap();
+        cx.update(|cx| {
+            view.update(cx, |v, cx| {
+                v.scroll
+                    .0
+                    .borrow()
+                    .base_handle
+                    .set_offset(gpui_kit::point(px(0.), px(-1088.)));
+                cx.notify();
+            })
+        });
+        cx.update_window(handle, |_, window, cx| {
+            window.render_frame(cx);
+            let before = window.find(entry_id(&branch, "sticky-label")).bounds();
+            window.click(entry_id(&branch, "sticky-entry"), cx);
+            window.render_frame(cx);
+            let after = window.find(entry_id(&branch, "label")).bounds();
+            assert_eq!(
+                before.origin, after.origin,
+                "collapse must preserve the clicked folder's visual slot"
+            );
+        })
+        .unwrap();
+        assert!(!cx.update(|cx| view.read(cx).expanded.contains(&branch)));
+    }
+
+    #[gpui_kit::test]
+    fn repeated_cached_expansion_keeps_clicked_label_fixed(cx: &mut TestAppContext) {
+        let parent = std::path::PathBuf::from("/fixture/folder");
+        cx.update(gpui_kit::init);
+        let (handle, view) = cx.update(|cx| {
+            gpui_kit::open_window(
+                WindowOptions {
+                    window_bounds: Some(WindowBounds::Windowed(Bounds {
+                        origin: Point::default(),
+                        size: size(px(400.), px(500.)),
+                    })),
+                    ..Default::default()
+                },
+                cx,
+                |_, cx| {
+                    cx.new(|cx| {
+                        let mut view = Explorer::new(
+                            "/fixture".into(),
+                            vec![DirectoryEntry {
+                                path: parent.clone(),
+                                is_dir: true,
+                                is_symlink: false,
+                            }],
+                            cx,
+                        );
+                        view.directories.insert(
+                            parent.clone(),
+                            (0..30)
+                                .map(|i| DirectoryEntry {
+                                    path: parent.join(format!("file-{i}")),
+                                    is_dir: false,
+                                    is_symlink: false,
+                                })
+                                .collect(),
+                        );
+                        view
+                    })
+                },
+            )
+            .unwrap()
+        });
+        cx.update_window(handle, |_, window, cx| {
+            window.render_frame(cx);
+            let original = window.find(entry_id(&parent, "label")).bounds();
+            for _ in 0..20 {
+                window.click(entry_id(&parent, "entry"), cx);
+                window.render_frame(cx);
+                assert_eq!(window.find(entry_id(&parent, "label")).bounds(), original);
+            }
+        })
+        .unwrap();
+        assert!(!cx.update(|cx| view.read(cx).expanded.contains(&parent)));
     }
 }

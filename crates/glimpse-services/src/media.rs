@@ -17,7 +17,19 @@ pub fn supports(path: &Path) -> bool {
             .unwrap_or_default()
             .to_ascii_lowercase()
             .as_str(),
-        "png" | "jpg" | "jpeg" | "webp" | "gif" | "bmp" | "tif" | "tiff" | "ico" | "icns" | "svg"
+        "png"
+            | "jpg"
+            | "jpeg"
+            | "webp"
+            | "gif"
+            | "bmp"
+            | "tif"
+            | "tiff"
+            | "ico"
+            | "icns"
+            | "svg"
+            | "exr"
+            | "hdr"
     )
 }
 pub fn read_image(path: &Path) -> Result<ImageDocument> {
@@ -41,16 +53,17 @@ pub fn read_image(path: &Path) -> Result<ImageDocument> {
     let png = if ext == "svg" {
         // No resources_dir: external file references are intentionally not resolved.
         let tree = resvg::usvg::Tree::from_data(&bytes, &resvg::usvg::Options::default())?;
-        let size = tree.size().to_int_size();
-        ensure!(
-            u64::from(size.width()) * u64::from(size.height()) <= 16_000_000,
-            "Image exceeds 16 megapixels"
-        );
-        let mut pixmap = resvg::tiny_skia::Pixmap::new(size.width(), size.height())
-            .context("Invalid SVG dimensions")?;
+        // Vector documents can describe enormous canvases. Rasterize a bounded
+        // preview instead of rejecting them or allocating their full native size.
+        let size = tree.size();
+        let scale = (4000.0 / size.width().max(size.height())).min(1.0);
+        let width = (size.width() * scale).ceil().clamp(1.0, 4000.0) as u32;
+        let height = (size.height() * scale).ceil().clamp(1.0, 4000.0) as u32;
+        let mut pixmap =
+            resvg::tiny_skia::Pixmap::new(width, height).context("Invalid SVG dimensions")?;
         resvg::render(
             &tree,
-            resvg::tiny_skia::Transform::identity(),
+            resvg::tiny_skia::Transform::from_scale(scale, scale),
             &mut pixmap.as_mut(),
         );
         pixmap.encode_png()?
@@ -72,7 +85,17 @@ pub fn read_image(path: &Path) -> Result<ImageDocument> {
             "Image exceeds 16 megapixels"
         );
         let mut out = Cursor::new(Vec::new());
-        decoded.write_to(&mut out, image::ImageFormat::Png)?;
+        // Float EXR/HDR pixels must be converted before PNG encoding. This is an
+        // SDR preview, not a color-managed HDR mastering surface.
+        let preview = if matches!(
+            decoded,
+            image::DynamicImage::ImageRgb32F(_) | image::DynamicImage::ImageRgba32F(_)
+        ) {
+            image::DynamicImage::ImageRgba8(decoded.to_rgba8())
+        } else {
+            decoded
+        };
+        preview.write_to(&mut out, image::ImageFormat::Png)?;
         out.into_inner()
     };
     Ok(ImageDocument {
@@ -107,6 +130,27 @@ fn icns_png(bytes: &[u8]) -> Result<&[u8]> {
 mod tests {
     use super::*;
     #[test]
+    fn float_images_produce_displayable_png_previews() -> Result<()> {
+        let dir = tempfile::tempdir()?;
+        let pixels = image::Rgb32FImage::from_pixel(2, 2, image::Rgb([0.25, 0.5, 1.0]));
+        for (extension, format) in [
+            ("exr", image::ImageFormat::OpenExr),
+            ("hdr", image::ImageFormat::Hdr),
+        ] {
+            let path = dir.path().join(format!("preview.{extension}"));
+            image::DynamicImage::ImageRgb32F(pixels.clone()).save_with_format(&path, format)?;
+            assert!(supports(&path));
+            let preview = read_image(&path)?;
+            let decoded = image::load_from_memory(&preview.png)?;
+            assert_eq!((decoded.width(), decoded.height()), (2, 2));
+            assert_eq!(decoded.to_rgb8().get_pixel(0, 0).0, [64, 128, 255]);
+            std::fs::write(&path, b"invalid image")?;
+            assert!(read_image(&path).is_err());
+        }
+        Ok(())
+    }
+
+    #[test]
     fn opens_project_assets_and_rejects_malformed_images() -> Result<()> {
         let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
         for p in [
@@ -121,9 +165,11 @@ mod tests {
         let path = temp.path().join("large.svg");
         std::fs::write(
             &path,
-            r#"<svg xmlns="http://www.w3.org/2000/svg" width="100000" height="100000"/>"#,
+            r#"<svg xmlns="http://www.w3.org/2000/svg" width="100000" height="50000"><rect width="100000" height="50000" fill="red"/></svg>"#,
         )?;
-        assert!(read_image(&path).is_err());
+        let preview = image::load_from_memory(&read_image(&path)?.png)?;
+        assert_eq!((preview.width(), preview.height()), (4000, 2000));
+        assert_eq!(preview.to_rgb8().get_pixel(2000, 1000).0, [255, 0, 0]);
         Ok(())
     }
 }

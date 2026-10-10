@@ -8,18 +8,19 @@ A lightweight viewer for code, diffs, and Markdown in the AI era.
 
 **AI writes. You see.**
 
-Glimpse 是使用 Rust + GPUI Kit 构建的 macOS 查看器（文件内容只读，支持显式 Git 暂存和提交）。打开项目目录，在文件和 Git 变更之间切换，专注阅读 AI 生成的代码与文档。
+Glimpse 是使用 Rust + GPUI Kit 构建的 macOS 查看器（普通文本支持基础编辑与手动保存，Diff 只读，支持显式 Git 暂存和提交）。打开项目目录，在文件和 Git 变更之间切换，专注阅读 AI 生成的代码与文档。
 
 ## 当前功能
 
 - **文件夹与目录树**：原生文件夹选择器、按需加载子目录、虚拟列表、键盘导航和可调宽度侧栏。遵循 `.gitignore`，隐藏 `.git`，不递归跟随目录软链接。
-- **代码阅读**：只读文本、行号、选择复制、⌘F 搜索和 Tree-sitter 高亮。支持 Rust、JavaScript/TypeScript/TSX、JSON、Python、Go、C/C++、Swift、HTML/CSS、Shell、TOML、YAML、Markdown 和 diff；其他文本按纯文本显示。
+- **代码阅读与基础编辑**：文本输入、删除、选择复制、撤销/重做、⌘S 保存、行号、⌘F 搜索和 Tree-sitter 高亮。支持 Rust、JavaScript/TypeScript/TSX、JSON、Python、Go、Java、SQL、Make、C/C++、Swift、HTML/CSS、Shell、TOML、YAML、Markdown 和 diff；其他文本按纯文本显示。
 - **Git diff**：自动识别仓库、分支和 linked worktree。区分 Staged / Unstaged / Untracked / Conflict，支持多个仓库，Changes 提供树状/平铺模式；普通 diff 默认双栏对齐，可切换 Inline，以红绿背景标记增删。支持删除、重命名和二进制差异提示，提供 View file 返回工作区文件。
 - **Markdown**：标题、列表、表格、带高亮的代码块、选择复制、预览/源码切换、相对路径图片和本地文件/目录/标题链接跳转。
 - **多窗口**：默认最大化普通窗口；File → New Window / ⌘⇧N 新建窗口，每个窗口独立打开项目。
 - **多标签与布局**：左侧 Files / Git 功能栏及可调宽度面板，右侧标签栏、文件路径和阅读区。同一文件重复打开会切回已有标签；源码与不同范围的 diff 独立保留阅读状态。Markdown 默认渲染，标签栏右端可切换源码。
 - **Minimap**：正文右侧显示文档结构缩略图、当前可见范围，支持点击/拖动定位；垂直滚动条位于最右侧。
-- **图片**：直接预览 PNG、JPEG、WebP、GIF（首帧）、BMP、TIFF、ICO、SVG 和含 PNG 表示的 ICNS；不支持或损坏的文件在内容区显示提示和 Issue 入口。
+- **图片**：直接预览 PNG、JPEG、WebP、GIF（首帧）、BMP、TIFF、ICO、EXR/HDR（SDR 预览）、SVG 和含 PNG 表示的 ICNS；不支持或损坏的文件在内容区显示提示和 Issue 入口。
+- **点文件**：UTF-8 文本正常查看和编辑；无法解码的点文件提供只读十六进制/ASCII 预览，最多前 64 KiB。格式覆盖和限制见 [适配清单](docs/file-format-support.md)。
 - **Git 操作**：Staged Changes / Changes 两组，支持文件、目录和全部暂存/移出暂存；消息框 ⌘Enter 只提交已暂存内容，保留 hooks 与签名。不提供克隆或丢弃文件修改。
 - **自动刷新**：监听文件与 Git 元数据变更，合并事件后后台刷新，保留目录展开、标签模式和阅读位置；⌘R 可手动刷新。
 - **导航**：顶部居中的前进/后退与工作区文件搜索；底部只显示当前文件格式。
@@ -30,7 +31,7 @@ Glimpse 是使用 Rust + GPUI Kit 构建的 macOS 查看器（文件内容只读
 
 ## 下载
 
-[下载 Glimpse 0.1.1 · macOS Apple Silicon DMG](https://github.com/jony4/Glimpse/releases/tag/v0.1.1)。打开 DMG，将 Glimpse 拖到 Applications。
+[下载 Glimpse 0.1.2 · macOS Apple Silicon DMG](https://github.com/jony4/Glimpse/releases/tag/v0.1.2)。打开 DMG，将 Glimpse 拖到 Applications。
 
 当前版本使用 ad-hoc 签名，尚未进行 Developer ID 签名和公证；首次打开可能需要在系统设置 → 隐私与安全性中手动允许。发布页同时提供 SHA-256 校验文件。
 
@@ -49,6 +50,7 @@ cargo run --locked -- README.md
 | 新建独立窗口 | ⌘⇧N |
 | 打开文件夹 | ⌘⇧O |
 | 打开文件 | ⌘O |
+| 保存当前文件 | ⌘S |
 | 刷新 | ⌘R |
 | 文本内搜索（源码/diff 获得焦点时） | ⌘F |
 | 目录树选择 / 展开 / 收起 / 打开 | ↑ ↓ / → / ← / Enter |
@@ -82,7 +84,7 @@ crates/
       explorer.rs            # 按需目录树
       changes.rs             # 多仓库、提交入口、变更列表
       changes/tree.rs        # 目录层级与可见行投影
-      reader.rs              # Markdown / 代码 / 图片 / diff 阅读
+      reader/                # Markdown / 代码 / 图片 / diff 阅读
       split_diff.rs          # 对齐双栏与同步滚动
       minimap.rs             # 文档缩略图和滚动定位
       welcome.rs             # 欢迎页
@@ -96,3 +98,5 @@ scripts/                     # 本地打包、可选图标生成
 ## License
 
 [MIT](LICENSE). Third-party dependencies retain their respective licenses.
+
+普通文本、代码和 Markdown 源码支持记事本式编辑。Markdown 点击 Source 图标编辑，切回 Preview 查看当前内容。修改后标签出现圆点，保存通过 ⌘S 或 Save 按钮。关闭、切换项目及应用菜单退出会提示未保存内容；外部文件变化不会覆盖草稿，保存冲突会报错并保留编辑。当前仅编辑已打开的 UTF-8 文件，不提供新建空白文件、另存为或自动保存。

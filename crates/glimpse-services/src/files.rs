@@ -36,10 +36,112 @@ pub fn read_document(path: &Path) -> Result<Document> {
     })
 }
 
+/// Save an existing text file only if it still matches the opened snapshot.
+/// A same-directory temporary file avoids truncation on a failed write.
+pub fn save_document(path: &Path, expected: &str, text: &str) -> Result<()> {
+    use std::io::Write;
+    static SAVES: std::sync::Mutex<()> = std::sync::Mutex::new(());
+    let _guard = SAVES
+        .lock()
+        .map_err(|_| anyhow::anyhow!("Save lock unavailable"))?;
+    ensure!(
+        text.len() as u64 <= MAX_DOCUMENT_BYTES,
+        "File exceeds the 2 MiB editing limit"
+    );
+    ensure!(
+        !text.contains('\0'),
+        "Text contains a null byte and cannot be reopened as a supported text file"
+    );
+    let target = path
+        .canonicalize()
+        .context("The file was moved or deleted; your edits have not been saved")?;
+    let metadata = std::fs::metadata(&target)?;
+    ensure!(metadata.is_file(), "Not a regular file");
+    ensure!(
+        !metadata.permissions().readonly(),
+        "File is read-only; your edits have not been saved"
+    );
+    ensure!(
+        read_document(&target)?.text == expected,
+        "File changed on disk. Save canceled to avoid overwriting external changes; your edits are still open."
+    );
+    let parent = target.parent().context("File has no parent folder")?;
+    let mut temporary = tempfile::NamedTempFile::new_in(parent)
+        .context("Cannot create a save file in this folder")?;
+    temporary.write_all(text.as_bytes())?;
+    temporary
+        .as_file()
+        .set_permissions(metadata.permissions())?;
+    temporary.as_file().sync_all()?;
+    ensure!(
+        read_document(&target)?.text == expected,
+        "File changed while saving; your edits are still open."
+    );
+    temporary
+        .persist(&target)
+        .map_err(|e| e.error)
+        .context("Cannot replace the file; your edits are still open")?;
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use std::fs;
+
+    #[test]
+    fn saving_preserves_text_and_rejects_external_changes_or_deletion() -> Result<()> {
+        let dir = tempfile::tempdir()?;
+        let path = dir.path().join("notes.txt");
+        fs::write(&path, "old\r\n")?;
+        save_document(&path, "old\r\n", "新内容\r\n")?;
+        assert_eq!(fs::read_to_string(&path)?, "新内容\r\n");
+        assert!(save_document(&path, "新内容\r\n", "invalid\0text").is_err());
+        assert_eq!(fs::read_to_string(&path)?, "新内容\r\n");
+        fs::write(&path, "external")?;
+        assert!(save_document(&path, "新内容\r\n", "draft").is_err());
+        assert_eq!(fs::read_to_string(&path)?, "external");
+        fs::remove_file(&path)?;
+        assert!(save_document(&path, "external", "draft").is_err());
+        assert!(!path.exists());
+        Ok(())
+    }
+    #[cfg(unix)]
+    #[test]
+    fn saving_keeps_symlink_and_permissions_and_respects_readonly() -> Result<()> {
+        use std::os::unix::fs::{PermissionsExt, symlink};
+        let dir = tempfile::tempdir()?;
+        let target = dir.path().join("script.sh");
+        let link = dir.path().join("link.sh");
+        fs::write(&target, "old")?;
+        fs::set_permissions(&target, fs::Permissions::from_mode(0o755))?;
+        symlink(&target, &link)?;
+        save_document(&link, "old", "new")?;
+        assert!(fs::symlink_metadata(&link)?.file_type().is_symlink());
+        assert_eq!(fs::read_to_string(&target)?, "new");
+        assert_eq!(fs::metadata(&target)?.permissions().mode() & 0o777, 0o755);
+        fs::set_permissions(&target, fs::Permissions::from_mode(0o444))?;
+        assert!(save_document(&target, "new", "blocked").is_err());
+        assert_eq!(fs::read_to_string(&target)?, "new");
+        Ok(())
+    }
+    #[test]
+    fn two_windows_cannot_overwrite_each_others_saves() -> Result<()> {
+        let dir = tempfile::tempdir()?;
+        let path = dir.path().join("shared.txt");
+        fs::write(&path, "base")?;
+        let outcomes = std::thread::scope(|scope| {
+            let a = scope.spawn(|| save_document(&path, "base", "first"));
+            let b = scope.spawn(|| save_document(&path, "base", "second"));
+            (a.join().unwrap().is_ok(), b.join().unwrap().is_ok())
+        });
+        assert_ne!(outcomes.0, outcomes.1);
+        assert!(matches!(
+            fs::read_to_string(&path)?.as_str(),
+            "first" | "second"
+        ));
+        Ok(())
+    }
 
     #[test]
     fn reads_markdown_without_modifying_the_file() -> Result<()> {

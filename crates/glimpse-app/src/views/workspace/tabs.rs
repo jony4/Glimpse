@@ -34,6 +34,19 @@ impl Workspace {
     }
 
     pub(super) fn close_tab(&mut self, index: usize, window: &mut Window, cx: &mut Context<Self>) {
+        if self.tabs.get(index).is_some_and(|r| r.is_dirty()) || self.is_saving() {
+            self.confirm_discard(super::editing::DiscardAction::CloseTab(index), window, cx);
+        } else {
+            self.close_tab_unchecked(index, window, cx);
+        }
+    }
+
+    pub(super) fn close_tab_unchecked(
+        &mut self,
+        index: usize,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         if index >= self.tabs.len() {
             return;
         }
@@ -65,6 +78,9 @@ impl Workspace {
                         .unwrap_or_default()
                         .to_string_lossy()
                         .into_owned();
+                    if reader.is_dirty() {
+                        label.push_str(" ●");
+                    }
                     if let Some(diff) = &reader.diff {
                         label.push_str(&format!(" · {}", diff.scope.label()));
                     }
@@ -197,7 +213,7 @@ impl Workspace {
                                     .selected(preview)
                                     .on_click(cx.listener(|view, _, _, cx| {
                                         if let Some(i) = view.active {
-                                            view.tabs[i].set_preview(true);
+                                            view.tabs[i].set_preview(true, cx);
                                         }
                                         cx.notify();
                                     })),
@@ -212,7 +228,7 @@ impl Workspace {
                                     .selected(!preview)
                                     .on_click(cx.listener(|view, _, window, cx| {
                                         if let Some(i) = view.active {
-                                            view.tabs[i].set_preview(false);
+                                            view.tabs[i].set_preview(false, cx);
                                             view.tabs[i].focus_source(window, cx);
                                         }
                                         cx.notify();

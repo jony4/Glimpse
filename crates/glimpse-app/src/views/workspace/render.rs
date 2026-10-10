@@ -1,11 +1,11 @@
 use super::{Sidebar, Workspace};
 use crate::{
-    app::actions::{CloseWindow, OpenFile, OpenFolder, Refresh},
+    app::actions::{CloseWindow, OpenFile, OpenFolder, Refresh, SaveFile},
     views::welcome::welcome,
 };
 use gpui_kit::{
     component::{
-        ActiveTheme,
+        ActiveTheme, Disableable, Sizable,
         button::{Button, ButtonCustomVariant, ButtonVariants},
         h_flex,
         menu::ContextMenuExt,
@@ -82,6 +82,29 @@ impl Render for Workspace {
                         .border_color(cx.theme().border)
                         .text_color(cx.theme().muted_foreground)
                         .child(div().flex_1().min_w_0().truncate().child(path))
+                        .when(
+                            self.active_reader().is_some_and(|r| r.editor().is_some()),
+                            |bar| {
+                                bar.child(
+                                    Button::new("save-file")
+                                        .ghost()
+                                        .xsmall()
+                                        .label(if self.is_saving() {
+                                            "Saving…"
+                                        } else {
+                                            "Save"
+                                        })
+                                        .tooltip("Save (⌘S)")
+                                        .disabled(
+                                            self.is_saving()
+                                                || !self
+                                                    .active_reader()
+                                                    .is_some_and(|r| r.is_dirty()),
+                                        )
+                                        .on_click(cx.listener(|v, _, w, cx| v.save_active(w, cx))),
+                                )
+                            },
+                        )
                         .when(
                             self.active_reader().is_some_and(|r| r.diff.is_some()),
                             |bar| {
@@ -263,11 +286,12 @@ impl Render for Workspace {
             .on_action(cx.listener(|v, _: &OpenFile, w, cx| v.choose_path(false, w, cx)))
             .on_action(cx.listener(|v, _: &OpenFolder, w, cx| v.choose_path(true, w, cx)))
             .on_action(cx.listener(|v, _: &Refresh, w, cx| v.refresh(w, cx)))
+            .on_action(cx.listener(|v, _: &SaveFile, w, cx| v.save_active(w, cx)))
             .on_action(cx.listener(|v, _: &CloseWindow, w, cx| {
                 if let Some(i) = v.active {
                     v.close_tab(i, w, cx);
                 } else {
-                    w.remove_window();
+                    v.request_close_window(w, cx);
                 }
             }))
             .when_some(self.error.clone(), |view, error| {
@@ -300,7 +324,7 @@ impl Render for Workspace {
                         h_resizable("workspace-panels")
                             .child(
                                 resizable_panel()
-                                    .size(px(280.))
+                                    .size(px(320.))
                                     .flex_none()
                                     .size_range(px(180.)..px(420.))
                                     .child(sidebar),
