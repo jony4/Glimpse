@@ -1,0 +1,21 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 1024 1024" fill="none">
+  <title>Glim</title>
+  <desc>A luminous eye held between two code brackets.</desc>
+  <defs>
+    <linearGradient id="surface" x1="160" y1="100" x2="850" y2="940" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#233548"/>
+      <stop offset="1" stop-color="#0C1320"/>
+    </linearGradient>
+    <linearGradient id="iris" x1="441" y1="432" x2="582" y2="592" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#AAFAE3"/>
+      <stop offset="1" stop-color="#4BC5C4"/>
+    </linearGradient>
+  </defs>
+  <rect x="32" y="32" width="960" height="960" rx="220" fill="url(#surface)"/>
+  <rect x="33" y="33" width="958" height="958" rx="219" stroke="#FFFFFF" stroke-opacity=".12" stroke-width="2"/>
+  <path d="M388 338 214 512 388 686" stroke="#DBEFEF" stroke-width="46" stroke-linecap="round" stroke-linejoin="round"/>
+  <path d="M636 338 810 512 636 686" stroke="#DBEFEF" stroke-width="46" stroke-linecap="round" stroke-linejoin="round"/>
+  <circle cx="512" cy="512" r="98" fill="url(#iris)"/>
+  <circle cx="512" cy="512" r="40" fill="#152333"/>
+  <circle cx="542" cy="478" r="15" fill="#F1FFFA"/>
+</svg>

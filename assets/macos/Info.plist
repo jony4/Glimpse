@@ -2,14 +2,14 @@
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
-    <key>CFBundleName</key><string>Glimpse</string>
-    <key>CFBundleDisplayName</key><string>Glimpse</string>
+    <key>CFBundleName</key><string>Glim</string>
+    <key>CFBundleDisplayName</key><string>Glim</string>
     <key>CFBundleIdentifier</key><string>io.github.jony4.glimpse</string>
-    <key>CFBundleExecutable</key><string>glimpse</string>
-    <key>CFBundleIconFile</key><string>Glimpse</string>
+    <key>CFBundleExecutable</key><string>glim</string>
+    <key>CFBundleIconFile</key><string>Glim</string>
     <key>CFBundlePackageType</key><string>APPL</string>
-    <key>CFBundleShortVersionString</key><string>0.1.2</string>
-    <key>CFBundleVersion</key><string>3</string>
+    <key>CFBundleShortVersionString</key><string>0.1.3</string>
+    <key>CFBundleVersion</key><string>4</string>
     <key>NSHighResolutionCapable</key><true/>
     <key>NSSupportsAutomaticGraphicsSwitching</key><true/>
 </dict>

@@ -1,3 +1,5 @@
+> 历史记录：本文保留更名前的 Glimpse 名称、路径与产物信息。当前品牌为 Glim；这些记录不代表更名后的构建已经验证或发布。
+
 # Verification
 
 Verified on macOS on 2026-10-09 using Rust 1.99.0 and GPUI Kit 0.7.1.

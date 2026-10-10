@@ -1,17 +1,17 @@
 # 架构约定
 
-Glimpse 是 macOS 查看器，负责 Markdown、代码、图片和 Git diff 阅读。普通 UTF-8 文件支持基础编辑和明确保存，Diff/图片仍只读；支持显式暂存/移出暂存，以及提交消息框的 ⌘Enter；提交仅包含 index，不提供克隆。
+Glim 是 macOS 查看器，负责 Markdown、代码、图片和 Git diff 阅读。普通 UTF-8 文件支持基础编辑、自动保存和手动保存，Diff/图片仍只读；支持显式暂存/移出暂存，以及提交消息框的 ⌘Enter；提交仅包含 index，不提供克隆。
 
 ```text
-glimpse-app ──────> glimpse-services ──────> glimpse-core
-     └──────────────────────────────────> glimpse-core
+glim-app ──────> glim-services ──────> glim-core
+     └──────────────────────────────────> glim-core
 ```
 
 ## 职责
 
-- `glimpse-core`：文档、路径对应的语言、目录项、仓库和变更范围模型，以及 unified/combined patch 中变更行的 UTF-8 字节范围。无 GPUI 或 I/O 依赖。
-- `glimpse-services`：`files` 读取有限大小的 UTF-8 文本；`workspace` 按层读取目录；`git` 识别仓库、读取状态和 patch，并提供显式批量暂存/移出暂存与提交；`media` 在后台有限解码图片、将 SVG 栅格化为 PNG；`watch` 管理原生文件监听。阻塞 API 只从后台任务调用。
-- `glimpse-app`：组合服务和 GPUI；`app` 管理启动、菜单、动作和内嵌资源；`views/workspace` 管理窗口状态、任务编排和整体布局；`Explorer`、`Changes`、`Reader` 分别管理三种呈现。
+- `glim-core`：文档、路径对应的语言、目录项、仓库和变更范围模型，以及 unified/combined patch 中变更行的 UTF-8 字节范围。无 GPUI 或 I/O 依赖。
+- `glim-services`：`files` 读取有限大小的 UTF-8 文本；`workspace` 按层读取目录；`git` 识别仓库、读取状态和 patch，并提供显式批量暂存/移出暂存与提交；`media` 在后台有限解码图片、将 SVG 栅格化为 PNG；`watch` 管理原生文件监听。阻塞 API 只从后台任务调用。
+- `glim-app`：组合服务和 GPUI；`app` 管理启动、菜单、动作和内嵌资源；`views/workspace` 管理窗口状态、任务编排和整体布局；`Explorer`、`Changes`、`Reader` 分别管理三种呈现。
 
 保留具体函数和明确的模块边界，在出现多个实现需求时再引入服务 trait。
 
@@ -101,7 +101,7 @@ Explorer 不设额外路径说明栏。目录展开时缓存每行的父行索�
 
 Issue 格式名优先使用非空扩展名；无扩展名时使用文件名本身（如 `.DS_Store`、`.env`、`README`），仍不携带父目录路径或文件内容。
 
-正式包名始终为 Glimpse.app，bundle identifier 为 io.github.jony4.glimpse；不为测试修改正式包名。
+正式包名为 Glim.app，可执行文件为 glim，内部 crate 统一使用 glim- 前缀；模块职责和依赖方向不变。为延续 macOS 应用身份，bundle identifier 保留 io.github.jony4.glimpse；不为测试修改正式包名。
 
 ## 稳定滚动和布局
 
@@ -119,7 +119,7 @@ Dock 菜单复用 NewWindow 全局动作。Explorer 普通行、吸顶行、工�
 
 SourceReader retains an editable EditorState for ordinary text, with auto-closing pairs and smart indentation disabled. DiffReader and SplitDiff remain read-only. Input change events update the dirty flag against the saved baseline and refresh minimap data; rendering does not snapshot or write files. Markdown refreshes its preview and anchor map from the current buffer when entering Preview. Saving does not reset the editor, cursor or undo stack.
 
-`workspace/editing.rs` owns save/confirmation task handles. Save captures the editor identity, disk baseline and current text, then performs I/O on the background executor. Success advances the baseline to the captured text, preserving any newer edits. Pre-save refresh work is canceled, and refresh results never replace dirty or saving tabs. Tab/window close, replacing a project and the app's Quit action offer Cancel/Discard when drafts exist. The application tracks weak workspace references to guard Quit across all windows.
+`workspace/editing.rs` owns save/confirmation task handles and per-editor change subscriptions with cancellable 800 ms autosave timers. Autosave targets the editor identity even after tab switches; a queue serializes saves across tabs and retains requests arriving during a write. Manual save bypasses the debounce. Failed saves retain the draft without an automatic retry loop. Save captures the editor identity, disk baseline and current text, then performs I/O on the background executor. Success advances the baseline to the captured text, preserving any newer edits. Pre-save refresh work is canceled, and refresh results never replace dirty or saving tabs. Tab/window close, replacing a project and the app's Quit action offer Cancel/Discard when drafts exist. The application tracks weak workspace references to guard Quit across all windows.
 
 `services/files::save_document` serializes local saves, resolves symlinks, checks the current content against the baseline, writes a same-directory temporary file, preserves permissions and syncs before replacement. It rechecks content before replacement and rejects read-only, deleted, externally modified or oversized files. Atomic replacement prevents truncation on failure; it does not provide a cross-process filesystem transaction, preserve hard-link identity or recover from force-quit. No new-document/Save As/session-draft recovery flow is added.
 
@@ -137,3 +137,31 @@ text/image readers. Workspace background loading routes these to Renderer::Bytes
 which retains a read-only SourceReader but exposes no save editor or dirty state.
 It is separate from editable Source and read-only Diff despite sharing presentation.
 See file-format-support.md for coverage, limits and deferred dedicated viewers.
+
+## Workspace roots and reader preferences
+
+Workspace retains all added folder roots; Explorer owns one collapsible root row per folder. Add Folder preserves tabs and drafts. Contained roots are coalesced to prevent duplicate tree identities. Searches span all roots and services::workspace::repositories_for_roots merges repositories by canonical root. Native watchers cover the added roots and existing document parents. Explicit Open Folder still replaces the workspace through the unsaved-draft guard.
+
+The source-control view uses the existing vertical resizable panels for Repositories and Changes. The activity bar toggles sidebar visibility while retaining the Explorer/Changes entities. Reader controls live in the title header; their selected backgrounds use low-opacity theme foreground. Word wrap updates existing EditorState entities (including both diff panes), applies to newly loaded readers, and persists through services::preferences in the user's Application Support/Glim directory. When the new preference file does not exist, it reads the legacy Application Support/Glimpse file; subsequent changes are saved only under Glim. Preference I/O runs outside render; only startup reads the small preference file synchronously. Manual save remains a keyboard/menu action, with no Save button in the reader.
+
+`app/languages.rs` registers bundled highlight queries for grammars whose pinned toolkit resources are empty (C#, Swift, GraphQL, Protobuf and CMake), and corrects ERB injection to Ruby. Grammar registration runs at startup, not in render; the existing toolkit parser registry remains the only highlighting engine.
+
+## Bounded text and model metadata
+
+`services/paged.rs` owns bounded UTF-8 windows, byte offsets, file version checks and the full-view ceiling. `workspace/loading` probes a 256 KiB window before choosing editable text (8 MiB maximum) or `Renderer::Paged` for oversized files / lines over 16 KiB / more than 100,000 newline characters. `reader/paged.rs` owns the background read and confirmation task, previous page offsets, one text buffer and byte ranges for virtual rows. Paging replaces the buffer; full view requires a prompt and is limited to 64 MiB and one million newline characters. Rows split long lines at UTF-8 boundaries. Paged content never exposes a save editor or autosave subscription; file fingerprints prevent needless replacement on filesystem refresh. Layout and render do no filesystem I/O. This budget is per tab, not an application-wide memory cap.
+
+`services/safetensors.rs` reads only the 8-byte length and a bounded JSON header, reports tensor shape/dtype/offset-derived sizes and metadata, then uses the existing read-only renderer. Weight bytes are never loaded. This inspector validates bounded structure and offset ranges, not complete tensor format correctness. serde_json is an I/O-layer dependency; core remains independent of it.
+
+`reader/lexical.rs` implements the toolkit's existing InputHighlighter interface for Dockerfile, INI, dotenv, ignore rules, Jinja-family templates and Nix. It retains a shared Rope snapshot and tokenizes visible lines on demand, using the active syntax theme. It adds no LSP, parser plugin layer or file-wide decoration arrays. Existing programming-language grammars remain in app/languages. The lexical mode deliberately provides basic single-line coloring, not complete cross-line syntax or folding.
+
+The bottom status bar is removed. Unsaved tabs use a small muted mark in the close-button slot rather than a marker appended to the filename. Basic editor typography uses a 14 px monospace face with 22 px line height.
+
+Autosave disk-baseline comparisons use a reusable 64 KiB buffer, avoiding two additional whole-document allocations during a save. Read-only SourceReader instances no longer retain an unused editing baseline.
+
+## Git branch management and Graph
+
+`core/git_management.rs` defines branch snapshots, explicit operation requests and topology rows without I/O or UI dependencies. `services/git/management.rs` extends the existing bounded, shell-free Git runner with branch/remotes snapshots, fetch/pull/push/publish/sync, branch create/switch/track/rename/safe-delete/merge, merge abort and stash/apply. A request includes the observed HEAD and current branch; execution rechecks both. Pull is fast-forward only, push uses an explicit upstream refspec, deletion uses `-d`, and worktree replacements require a clean status. No automatic stash, forced checkout, rebase or force push is introduced. Git errors and merge conflicts are retained and reported, not interpreted as successful rollback.
+
+`changes/repository.rs` owns input, picker, confirmation, snapshot and graph task handles. Changes has a third resizable Graph section, initially collapsed; it loads only when expanded. Git's bounded topological log supplies lane geometry, painted as themed paths/nodes by GPUI, with virtual rows and 200–1,000 commit limits. Branch metadata is bounded at 1,000 refs and stash metadata at 100 entries. Main-area historical readers are immutable and excluded from filesystem refresh; navigation retains commit identity independently of worktree file tabs. Commit detail output is bounded by the runner's 8 MiB ceiling and uses a read-only diff highlighter, with merge patches against the first parent.
+
+Workspace Git events pass through `workspace/git.rs` before mutation. Worktree updates check drafts and active saves across registered windows and temporarily lock editor states and Git write controls. New readers/windows inherit the lock. Completion unlocks, refreshes and routes failures to the existing bottom-right notification; close/quit is held while a management operation is running. Existing external file conflict detection remains active. This is process-local coordination, not a filesystem transaction against external Git clients. Fetch/push remain explicit user actions and retain the machine's configured authentication, hooks and signing behavior.

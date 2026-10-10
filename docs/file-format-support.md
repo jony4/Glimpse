@@ -1,4 +1,20 @@
-# 文件格式适配记录（2026-10-10）
+# 文件格式支持
+
+当前完整支持矩阵与内存边界见 [README](../README.md#一个窗口读懂更多文件)。
+
+## 2026-10-10：本机文件名盘点与本轮新增
+
+在 `/Users/niuqiang/` 进行只读文件名统计，没有读取用户文件正文。首轮有界抽样覆盖 400,000 项；第二轮排除 Library、依赖、缓存、Git 与构建目录后扫描 206,700 项。两次存在重叠，不将数量相加，也不宣称是全盘穷举。
+
+第二轮观察到 properties 108、CSV 85、TOML 84、RST 18、Nix 18、INI 11、safetensors 2、ipynb 2、Jinja 1、ONNX 1；另观察到 Dockerfile、.npmrc、.editorconfig、.env 与忽略规则文件。数量只反映本次扫描覆盖范围。
+
+新增 Dockerfile/Containerfile、INI/常见 rc、dotenv、ignore、Jinja/Nunjucks/Twig、Nix 轻量着色；扩展 XML/plist、SCSS、Cython、GeoJSON/notebook JSON 和常见 lockfile 映射。safetensors 提供有界头部摘要。普通文本预算提高至 8 MiB，超大文本/超长行使用 256 KiB 分页与确认后的有界完整视图。
+
+本轮按用户要求只修改代码，未运行测试、构建、安装或 UI 验证。以下历史验证记录不代表本轮改动已经通过验证。
+
+## 历史适配记录
+
+# 早期适配记录（2026-10-10）
 
 对 /Users/neo/dev 进行文件名统计，跳过 Git、依赖和缓存目录。
 实文件检查按选定格式最多抽取 5 个样本，跳过隐藏目录和凭据文件；
@@ -22,7 +38,7 @@
 
 CSV、RST、INI、日志、properties、systemd、USDA 等 UTF-8 文本此前已能打开，
 继续使用文本查看/编辑；CSV 尚无单元格视图，RST 尚无排版预览。
-文本限制仍是 2 MiB，图片输入限制 32 MiB，位图保留原有像素和内存限制。
+历史版本文本限制是 2 MiB，图片输入限制 32 MiB，位图保留原有像素和内存限制。
 
 ## 点开头的文件
 
@@ -30,7 +46,7 @@ CSV、RST、INI、日志、properties、systemd、USDA 等 UTF-8 文本此前已
 无法作为文本或图片解码的点文件（例如 .DS_Store）使用只读字节预览：
 显示偏移、十六进制和 ASCII，最多前 64 KiB，并明确标记截断。
 这是原始字节查看，不是 .DS_Store 语义解析，也不支持二进制编辑。
-超过文本大小限制的点文件同样降级到字节预览；权限不足、失效链接等仍会报错。
+历史版本中超过文本大小限制的点文件同样降级到字节预览；当前版本改为文本分页；权限不足、失效链接等仍会报错。
 使用临时的 .env、.npmrc、.gitignore、.config.local 和二进制样本测试，
 未读取用户真实凭据文件。
 
@@ -55,7 +71,7 @@ CSV、RST、INI、日志、properties、systemd、USDA 等 UTF-8 文本此前已
 实文件抽样不等同于逐个 UI 渲染验证。
 
 复现命令：
-cargo run -p glimpse-services --example audit_formats --locked -- /path/to/project
+cargo run -p glim-services --example audit_formats --locked -- /path/to/project
 
 GPUI Kit 仍固定 0.7.1，仅添加 Java/SQL/Make grammar 功能。
 SQL grammar 的构建依赖要求 cc 1.2.x，Cargo.lock 中 cc 从 1.6.0

@@ -1,0 +1,13 @@
+gpui_kit::actions!(
+    glim,
+    [
+        NewWindow,
+        Quit,
+        OpenFile,
+        OpenFolder,
+        AddFolder,
+        SaveFile,
+        Refresh,
+        CloseWindow
+    ]
+);

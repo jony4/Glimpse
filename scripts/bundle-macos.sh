@@ -23,9 +23,9 @@ target_dir="$(cargo metadata --format-version 1 --no-deps | python3 -c 'import j
 if [[ -n "$build_target" ]]; then
     target_dir="$target_dir/$build_target"
 fi
-bundle_dir="${GLIMPSE_BUNDLE_DIR:-$PWD/dist/Glimpse.app}"
+bundle_dir="${GLIM_BUNDLE_DIR:-${GLIMPSE_BUNDLE_DIR:-$PWD/dist/Glim.app}}"
 mkdir -p "$bundle_dir/Contents/MacOS" "$bundle_dir/Contents/Resources"
-cp "$target_dir/$build_profile/glimpse" "$bundle_dir/Contents/MacOS/glimpse"
-cp assets/macos/Glimpse.icns "$bundle_dir/Contents/Resources/Glimpse.icns"
+cp "$target_dir/$build_profile/glim" "$bundle_dir/Contents/MacOS/glim"
+cp assets/macos/Glim.icns "$bundle_dir/Contents/Resources/Glim.icns"
 cp assets/macos/Info.plist "$bundle_dir/Contents/Info.plist"
 printf 'Created %s\n' "$bundle_dir"
