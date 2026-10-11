@@ -213,7 +213,9 @@ pub fn read_diff(root: &Path, change: &GitChange) -> Result<DiffDocument> {
     args.push("--".into());
     if change.scope == DiffScope::Untracked {
         args.push("/dev/null".into());
-        args.push(root.join(&change.path).into_os_string());
+        // -C already selects the repository. Relative paths also avoid Git for
+        // Windows rejecting verbatim \?\ prefixes in --no-index file arguments.
+        args.push(change.path.as_os_str().to_owned());
     } else {
         args.push(change.path.as_os_str().to_owned());
         if let Some(original) = &change.original_path {

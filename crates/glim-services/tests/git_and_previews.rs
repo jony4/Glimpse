@@ -30,6 +30,7 @@ fn repo() -> Result<tempfile::TempDir> {
         &["config", "user.email", "test@example.invalid"],
     )?;
     git(dir.path(), &["config", "commit.gpgsign", "false"])?;
+    git(dir.path(), &["config", "core.autocrlf", "false"])?;
     git(dir.path(), &["config", "core.hooksPath", ".git/no-hooks"])?;
     fs::write(dir.path().join("file.txt"), "base\n")?;
     git(dir.path(), &["add", "."])?;
