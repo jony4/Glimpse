@@ -61,8 +61,13 @@ pub struct Changes {
 impl EventEmitter<ChangeSelected> for Changes {}
 impl Changes {
     pub fn new(repositories: Vec<Repository>, window: &mut Window, cx: &mut Context<Self>) -> Self {
-        let message =
-            cx.new(|cx| InputState::new(window, cx).placeholder("Commit message · ⌘Enter"));
+        let message = cx.new(|cx| {
+            InputState::new(window, cx).placeholder(if cfg!(target_os = "macos") {
+                "Commit message · ⌘Enter"
+            } else {
+                "Commit message · Ctrl+Enter"
+            })
+        });
         let message_subscription =
             cx.subscribe_in(&message, window, |view, _, event, window, cx| {
                 if matches!(

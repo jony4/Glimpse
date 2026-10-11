@@ -38,6 +38,8 @@ pub struct Explorer {
     directories: HashMap<PathBuf, Vec<DirectoryEntry>>,
     expanded: HashSet<PathBuf>,
     tasks: HashMap<PathBuf, Task<()>>,
+    media_presence: HashMap<PathBuf, bool>,
+    media_tasks: HashMap<PathBuf, Task<()>>,
     rows: Vec<Row>,
     selected: Option<usize>,
     focus: FocusHandle,
@@ -63,6 +65,8 @@ impl Explorer {
             directories: HashMap::from([(root.clone(), entries)]),
             expanded: HashSet::from([root]),
             tasks: HashMap::new(),
+            media_presence: HashMap::new(),
+            media_tasks: HashMap::new(),
             rows: Vec::new(),
             selected: None,
             focus: cx.focus_handle(),
@@ -89,6 +93,8 @@ impl Explorer {
     }
 
     pub fn refresh(&mut self, cx: &mut Context<Self>) {
+        self.media_tasks.clear();
+        self.media_presence.clear();
         let mut paths = self.expanded.iter().cloned().collect::<Vec<_>>();
         paths.extend(self.roots.iter().cloned());
         paths.sort();
@@ -164,6 +170,29 @@ impl Explorer {
         }
         self.selected = selected.and_then(|path| rows.iter().position(|r| r.entry.path == path));
         self.rows = rows;
+    }
+
+    fn check_folder_media(&mut self, path: PathBuf, cx: &mut Context<Self>) {
+        if !cfg!(target_os = "macos") {
+            return;
+        }
+        if self.media_presence.contains_key(&path) || self.media_tasks.contains_key(&path) {
+            return;
+        }
+        let read_path = path.clone();
+        let read = cx.background_executor().spawn(async move {
+            glim_services::preview::folder_has_media(&read_path).unwrap_or(false)
+        });
+        let key = path.clone();
+        let task = cx.spawn(async move |view, cx| {
+            let present = read.await;
+            let _ = view.update(cx, |v, cx| {
+                v.media_tasks.remove(&path);
+                v.media_presence.insert(path, present);
+                cx.notify();
+            });
+        });
+        self.media_tasks.insert(key, task);
     }
 
     fn activate(&mut self, index: usize, window: &mut Window, cx: &mut Context<Self>) {
@@ -242,11 +271,7 @@ impl Explorer {
         let menu_path = row.entry.path.clone();
         let menu_is_dir = row.entry.is_dir;
         let menu_view = cx.entity().downgrade();
-        let has_media = self.directories.get(&menu_path).map(|entries| {
-            entries
-                .iter()
-                .any(|entry| !entry.is_dir && glim_services::preview::is_media(&entry.path))
-        });
+        let hover_path = menu_path.clone();
 
         let menu_root = self
             .roots
@@ -261,9 +286,17 @@ impl Explorer {
                 if sticky { "sticky-row" } else { "tree-row" },
             ))
             .relative()
+            .on_hover(cx.listener(move |view, hovered: &bool, _, cx| {
+                if *hovered && menu_is_dir {
+                    view.check_folder_media(hover_path.clone(), cx);
+                }
+            }))
             .on_mouse_down(
                 MouseButton::Right,
                 cx.listener(move |view, _, window, cx| {
+                    if menu_is_dir {
+                        view.check_folder_media(right_click_path.clone(), cx);
+                    }
                     view.selected = view
                         .rows
                         .iter()
@@ -362,8 +395,11 @@ impl Explorer {
                     view.activate_path(&row_path, sticky, window, cx);
                 })),
             )
-            .context_menu(move |mut menu, _, _| {
-                if menu_is_dir && has_media != Some(false) {
+            .context_menu(move |mut menu, _, cx| {
+                let has_media = menu_view.upgrade().is_some_and(|view| {
+                    view.read(cx).media_presence.get(&menu_path).copied() == Some(true)
+                });
+                if menu_is_dir && has_media {
                     for (label, shuffle) in [("Play in Order", false), ("Shuffle Play", true)] {
                         let path = menu_path.clone();
                         let view = menu_view.clone();
@@ -565,7 +601,12 @@ pub(super) fn path_menu(
     };
     let absolute = path.to_string_lossy().into_owned();
     menu.item(
-        PopupMenuItem::new("Reveal in Finder").on_click(move |_, _, cx| cx.reveal_path(&reveal)),
+        PopupMenuItem::new(if cfg!(target_os = "macos") {
+            "Reveal in Finder"
+        } else {
+            "Reveal in File Explorer"
+        })
+        .on_click(move |_, _, cx| cx.reveal_path(&reveal)),
     )
     .separator()
     .item(

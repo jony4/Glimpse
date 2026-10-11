@@ -15,9 +15,6 @@ const source = await readFile(fileURLToPath(new URL('../assets/branding/glim.svg
 const scale = 824 / 960;
 const inset = 100 - 32 * scale;
 const dockSource = source
-  .replace('#233548', '#496780')
-  .replace('#0C1320', '#1B2D43')
-  .replace('stroke-opacity=".12"', 'stroke-opacity=".26"')
   .replace('<path d="M388', '<g transform="translate(512 512) scale(1.22) translate(-512 -512)"><path d="M388')
   .replace('</svg>', '</g></svg>')
   .replace(/(<svg[^>]*>)/, `$1<g transform="translate(${inset} ${inset}) scale(${scale})">`)

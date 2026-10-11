@@ -111,13 +111,13 @@ pub fn run() -> Result<()> {
         cx.on_action(|_: &NewWindow, cx| open_workspace(None, cx));
         cx.on_action(|_: &DefaultApplications, cx| open_default_applications(cx));
         cx.bind_keys([
-            KeyBinding::new("cmd-q", Quit, None),
-            KeyBinding::new("cmd-shift-n", NewWindow, None),
-            KeyBinding::new("cmd-o", OpenFile, None),
-            KeyBinding::new("cmd-s", SaveFile, None),
-            KeyBinding::new("cmd-shift-o", OpenFolder, None),
-            KeyBinding::new("cmd-r", Refresh, None),
-            KeyBinding::new("cmd-w", CloseWindow, None),
+            KeyBinding::new("secondary-q", Quit, None),
+            KeyBinding::new("secondary-shift-n", NewWindow, None),
+            KeyBinding::new("secondary-o", OpenFile, None),
+            KeyBinding::new("secondary-s", SaveFile, None),
+            KeyBinding::new("secondary-shift-o", OpenFolder, None),
+            KeyBinding::new("secondary-r", Refresh, None),
+            KeyBinding::new("secondary-w", CloseWindow, None),
         ]);
         cx.set_dock_menu(vec![MenuItem::action("New Window", NewWindow)]);
         cx.set_menus(vec![
@@ -125,7 +125,9 @@ pub fn run() -> Result<()> {
                 name: "Glim".into(),
                 disabled: false,
                 items: vec![
+                    #[cfg(target_os = "macos")]
                     MenuItem::action("Default File Types…", DefaultApplications),
+                    #[cfg(target_os = "macos")]
                     MenuItem::separator(),
                     MenuItem::action("Quit Glim", Quit),
                 ],

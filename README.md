@@ -6,7 +6,7 @@
 
 **The all-purpose viewer for the AI era.**
 
-AI 时代的全能查看器。原生 macOS 应用，在一个轻巧的窗口里阅读代码、文档、图片、Git 变更和 AI 模型元数据。
+AI 时代的全能查看器。原生桌面应用（macOS / Windows），在一个轻巧的窗口里阅读代码、文档、图片、Git 变更和 AI 模型元数据。
 
 ## 支持的格式
 
@@ -42,13 +42,21 @@ AI 时代的全能查看器。原生 macOS 应用，在一个轻巧的窗口里�
 
 ## 下载与安装
 
-**[下载最新版 · macOS Apple Silicon](https://github.com/jony4/Glim/releases/latest)**
+**[下载最新版](https://github.com/jony4/Glim/releases/latest)**
 
-下载 Release 中的 `.dmg`，打开后将 **Glim.app** 拖入 **Applications（应用程序）**。从旧版 Glimpse 升级时，先退出旧应用，再使用 Glim。
+| 设备 | 下载文件 |
+| --- | --- |
+| Mac · Apple Silicon（M 系列） | `Glim-<版本>-macos-arm64.dmg` |
+| Mac · Intel | `Glim-<版本>-macos-x86_64.dmg` |
+| Windows · Intel / AMD 64 位 | `Glim-<版本>-windows-x64.zip` |
+
+Windows 解压后运行 `Glim.exe`，Git 功能需要安装 Git for Windows；快捷键使用 Ctrl，对应 macOS 的 ⌘。Windows 版目前支持文件树、文本编辑、Markdown/HTML、JSON 树、图片与 Git。PDF、Office/iWork、媒体、字体、SQLite 原生预览和默认类型管理目前仅 macOS 提供。Windows ARM 不在本次发布范围。
+
+macOS 下载 Release 中的 `.dmg`，打开后将 **Glim.app** 拖入 **Applications（应用程序）**。从旧版 Glimpse 升级时，先退出旧应用，再使用 Glim。
 
 ### 设为默认打开方式
 
-安装后，在 **Glim → Default File Types…** 中选择格式，点击 **Set Selected to Glim** 并确认。窗口显示当前默认应用，也可以用 **Restore Selected** 恢复此前保存的默认应用。macOS 按文件类型设置，同一类型的多个后缀可能一起生效。
+macOS 安装后，在 **Glim → Default File Types…** 中选择格式，点击 **Set Selected to Glim** 并确认。窗口显示当前默认应用，也可以用 **Restore Selected** 恢复此前保存的默认应用。macOS 按文件类型设置，同一类型的多个后缀可能一起生效。
 
 ### 首次打开被 macOS 拦截？
 

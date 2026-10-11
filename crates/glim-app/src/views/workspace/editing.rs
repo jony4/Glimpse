@@ -133,7 +133,7 @@ impl Workspace {
         let all = matches!(action, DiscardAction::Quit);
         let response = window.prompt(PromptLevel::Warning,
             if all { "Quit with unsaved changes?" } else { "Discard unsaved changes?" },
-            Some("Your edits have not been saved. Cancel and press ⌘S to save, or discard them to continue."),
+            Some("Your edits have not been saved. Cancel and save the file first, or discard the edits to continue."),
             &["Cancel", if all { "Discard All and Quit" } else { "Discard Changes" }], cx);
         self.confirm_task = Some(cx.spawn_in(window, async move |view, cx| {
             let discard = response.await == Ok(1);
@@ -222,7 +222,7 @@ mod tests {
         cx.update(|cx| {
             gpui_kit::init(cx);
             cx.bind_keys([gpui_kit::KeyBinding::new(
-                "cmd-s",
+                "secondary-s",
                 crate::app::actions::SaveFile,
                 None,
             )]);
@@ -246,7 +246,7 @@ mod tests {
         cx.update_window(handle, |_, window, cx| {
             window.render_frame(cx);
             window.click(("input", editor.entity_id()), cx);
-            window.press("cmd-a", cx);
+            window.press("secondary-a", cx);
             window.input("edited\n", cx);
         })
         .unwrap();
@@ -294,18 +294,18 @@ mod tests {
         cx.update_window(handle, |_, window, cx| {
             view.update(cx, |v, cx| v.activate_tab(0, window, cx));
             window.click(("input", editor.entity_id()), cx);
-            window.press("cmd-a", cx);
+            window.press("secondary-a", cx);
             window.input("manually saved\n", cx);
         })
         .unwrap();
         cx.run_until_parked();
-        cx.update_window(handle, |_, window, cx| window.press("cmd-s", cx))
+        cx.update_window(handle, |_, window, cx| window.press("secondary-s", cx))
             .unwrap();
         cx.run_until_parked();
         assert_eq!(std::fs::read_to_string(&path).unwrap(), "manually saved\n");
         assert!(!cx.update(|cx| view.read(cx).has_unsaved()));
         // Undo survives Save, and is itself an unsaved edit.
-        cx.update_window(handle, |_, window, cx| window.press("cmd-z", cx))
+        cx.update_window(handle, |_, window, cx| window.press("secondary-z", cx))
             .unwrap();
         cx.run_until_parked();
         assert!(cx.update(|cx| view.read(cx).has_unsaved()));

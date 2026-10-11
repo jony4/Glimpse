@@ -537,7 +537,7 @@ mod editing_tests {
             let (handle, view) = open(cx, |window, cx| {
                 let mut reader = Reader::new(
                     Document {
-                        path: std::path::Path::new("/tmp").join(name),
+                        path: std::env::temp_dir().join(name),
                         kind,
                         text: "Sample text\n".into(),
                     },
@@ -562,7 +562,7 @@ mod editing_tests {
         let (handle, view) = open(cx, |window, cx| {
             let mut reader = Reader::new(
                 Document {
-                    path: "/tmp/test-note.md".into(),
+                    path: std::env::temp_dir().join("test-note.md"),
                     kind: DocumentKind::Markdown,
                     text: "# Original\n".into(),
                 },
@@ -576,7 +576,7 @@ mod editing_tests {
         cx.update_window(handle, |_, window, cx| {
             window.render_frame(cx);
             window.click(("input", editor.entity_id()), cx);
-            window.press("cmd-a", cx);
+            window.press("secondary-a", cx);
             window.input("# Edited heading\n", cx);
         })
         .unwrap();
@@ -608,7 +608,7 @@ mod editing_tests {
         let (handle, view) = open(cx, |window, cx| {
             Reader::from_bytes(
                 glim_services::binary::BytePreview {
-                    path: "/tmp/.DS_Store".into(),
+                    path: std::env::temp_dir().join(".DS_Store"),
                     text: "00000000  00 ff 41".into(),
                 },
                 window,
@@ -620,7 +620,7 @@ mod editing_tests {
         cx.update_window(handle, |_, window, cx| {
             window.render_frame(cx);
             window.click(("input", editor.entity_id()), cx);
-            window.press("cmd-a", cx);
+            window.press("secondary-a", cx);
             window.input("must not overwrite binary bytes", cx);
         })
         .unwrap();
@@ -658,7 +658,7 @@ mod editing_tests {
             window.render_frame(cx);
             window.right_click(("input", editor.entity_id()), cx);
             window.click(("input", editor.entity_id()), cx);
-            window.press("cmd-a", cx);
+            window.press("secondary-a", cx);
             window.input("must not replace the diff", cx);
         })
         .unwrap();

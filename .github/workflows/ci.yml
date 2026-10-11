@@ -1,22 +1,62 @@
-name: macOS
-
+name: Desktop builds
 on:
   push:
+    branches: [main]
   pull_request:
-
+  workflow_dispatch:
 permissions:
   contents: read
-
 jobs:
-  check:
-    runs-on: macos-latest
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: macos-15
+            target: aarch64-apple-darwin
+            platform: macos-arm64
+            arch: arm64
+          - os: macos-15-intel
+            target: x86_64-apple-darwin
+            platform: macos-x86_64
+            arch: x86_64
+          - os: windows-2022
+            target: x86_64-pc-windows-msvc
+            platform: windows-x64
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 60
+    env:
+      CARGO_PROFILE_DEV_DEBUG: 0
+      CARGO_PROFILE_TEST_DEBUG: 0
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@1.99.0
         with:
           components: rustfmt, clippy
+          targets: ${{ matrix.target }}
+      - uses: ilammy/msvc-dev-cmd@v1
+        if: runner.os == 'Windows'
       - uses: Swatinem/rust-cache@v2
+        with:
+          key: ${{ matrix.platform }}
       - run: cargo fmt --all --check
       - run: cargo clippy --workspace --all-targets --locked -- -D warnings
       - run: cargo test --workspace --locked
       - run: cargo build --locked
+      - name: Package macOS
+        if: runner.os == 'macOS' && github.event_name != 'pull_request'
+        run: scripts/package-dmg.sh ${{ matrix.arch }}
+      - name: Package Windows
+        if: runner.os == 'Windows' && github.event_name != 'pull_request'
+        shell: pwsh
+        run: scripts/package-windows.ps1
+      - uses: actions/upload-artifact@v4
+        if: github.event_name != 'pull_request'
+        with:
+          name: Glim-${{ matrix.platform }}
+          path: |
+            dist/*.dmg
+            dist/*.zip
+            dist/*.sha256
+          if-no-files-found: error
+          retention-days: 14

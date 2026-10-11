@@ -141,7 +141,11 @@ impl SourceReader {
         }
         gpui_kit::component::h_flex()
             .size_full()
-            .font_family("Menlo")
+            .font_family(if cfg!(target_os = "windows") {
+                "Consolas"
+            } else {
+                "Menlo"
+            })
             .text_size(px(14.))
             .line_height(px(22.))
             .min_w_0()

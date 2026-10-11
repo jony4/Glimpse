@@ -9,7 +9,10 @@ fn git(root: &Path, args: &[&str]) -> Result<String> {
         .arg(root)
         .args(args)
         .env("GIT_CONFIG_NOSYSTEM", "1")
-        .env("GIT_CONFIG_GLOBAL", "/dev/null")
+        .env(
+            "GIT_CONFIG_GLOBAL",
+            if cfg!(windows) { "NUL" } else { "/dev/null" },
+        )
         .output()?;
     ensure!(
         output.status.success(),
@@ -27,7 +30,7 @@ fn repo() -> Result<tempfile::TempDir> {
         &["config", "user.email", "test@example.invalid"],
     )?;
     git(dir.path(), &["config", "commit.gpgsign", "false"])?;
-    git(dir.path(), &["config", "core.hooksPath", "/dev/null"])?;
+    git(dir.path(), &["config", "core.hooksPath", ".git/no-hooks"])?;
     fs::write(dir.path().join("file.txt"), "base\n")?;
     git(dir.path(), &["add", "."])?;
     git(dir.path(), &["commit", "-m", "initial"])?;

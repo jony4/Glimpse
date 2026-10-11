@@ -18,7 +18,8 @@ struct GitOutput {
 
 /// No shell, pager, optional index writes, external diff drivers, or textconv execution.
 fn run(root: &Path, args: &[&OsStr]) -> Result<GitOutput> {
-    let mut child = Command::new("git")
+    let mut command = Command::new("git");
+    command
         .arg("--no-pager")
         .args(["-c", "core.fsmonitor=false"])
         .arg("-C")
@@ -34,7 +35,14 @@ fn run(root: &Path, args: &[&OsStr]) -> Result<GitOutput> {
         .env("GIT_TERMINAL_PROMPT", "0")
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
+        .stderr(Stdio::piped());
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        const CREATE_NO_WINDOW: u32 = 0x08000000;
+        command.creation_flags(CREATE_NO_WINDOW);
+    }
+    let mut child = command
         .spawn()
         .context("Cannot run git; install Git or Apple Command Line Tools")?;
     let mut stderr = child.stderr.take().context("Missing Git stderr")?;

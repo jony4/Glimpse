@@ -10,6 +10,16 @@ pub fn is_media(path: &Path) -> bool {
         )
     })
 }
+pub fn folder_has_media(path: &Path) -> Result<bool> {
+    for entry in std::fs::read_dir(path)? {
+        let entry = entry?;
+        if is_media(&entry.path()) && entry.file_type()?.is_file() {
+            return Ok(true);
+        }
+    }
+    Ok(false)
+}
+
 pub fn is_font(path: &Path) -> bool {
     path.extension().and_then(|s| s.to_str()).is_some_and(|s| {
         matches!(
@@ -37,6 +47,9 @@ pub fn is_iwork(path: &Path) -> bool {
 /// `.key` is also used by plain-text cryptographic keys. Only document packages
 /// and ZIP containers should be handed to Keynote's Quick Look provider.
 pub fn can_open(path: &Path) -> bool {
+    if !cfg!(target_os = "macos") {
+        return false;
+    }
     if !supports(path) && !crate::sqlite::has_header(path) {
         return false;
     }
