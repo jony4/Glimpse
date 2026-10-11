@@ -1,6 +1,31 @@
 # 格式与限制
 
-主要格式见 [README](../README.md#支持的格式)。本文记录当前实现边界，不记录个人目录扫描或历史验证结果。
+本文记录当前支持的格式与实现边界。返回 [English](../README.md) · [简体中文](../README.zh-CN.md)。
+
+**平台说明：** PDF、Office/iWork、音视频、字体与 SQLite 原生预览目前仅 macOS 提供；其余工作台功能支持 macOS 和 Windows。
+
+## 支持的格式
+
+| 类型 | 格式与文件 |
+| --- | --- |
+| 编程语言 | Rust、C / C++、Go、Swift、Java、C#、Kotlin、Zig、Python、Ruby、PHP、Lua、Scala、Elixir、Shell |
+| Web 与模板 | JavaScript / JSX、TypeScript / TSX、HTML、CSS、Astro、Svelte、ERB、EJS、Jinja / Jinja2、Nunjucks、Twig；Vue 复用 HTML 高亮 |
+| SQLite | DB / SQLite / SQLite3、WAL / SHM 关联文件；表结构、定义 SQL、分页记录与二进制摘要，只读快照 |
+| 数据与接口 | JSON / JSONC / JSONL、GeoJSON、TOML、YAML、SQL、GraphQL、Protobuf；Notebook 查看 JSON 源码 |
+| 配置与构建 | Dockerfile、Containerfile、Makefile、CMake、Nix、INI、`.env`、`.npmrc`、`.editorconfig`、`.gitignore`、Gemfile 等 |
+| 文档与文本 | HTML / Markdown 排版预览（HTML 为静态阅读，不执行脚本）；TXT、日志、CSV 和其他 UTF-8 文件按文本查看 |
+| Apple 办公 | Keynote（KEY）、Pages、Numbers；原生只读预览，支持文件及文档包 |
+| Office | Word（DOC / DOCX）、Excel（XLS / XLSX）、PowerPoint（PPT / PPTX）、RTF；macOS 原生只读预览 |
+| 字体 | TTF、OTF、TTC、OTC、DFONT；字体信息、字形切换、自定义示例与多字号预览 |
+| PDF | 原生窗口阅读、翻页、缩放和文字选择 |
+| 音视频 | MP3、MP4、M4A、MOV、WAV、AAC 等；原生播放控件，文件夹顺序 / 随机队列 |
+| 图片 | PNG、JPEG、WebP、GIF、BMP、TIFF、ICO、SVG、ICNS、EXR、HDR |
+| Git | 工作区与暂存区 diff、提交补丁、`.diff` / `.patch` |
+| AI 模型 | safetensors：张量、shape、精度、参数数量与元数据，只读头部，不加载权重 |
+
+编程语言使用语法高亮；部分模板和配置采用轻量着色。GIF 显示首帧，EXR / HDR 转为 SDR 预览，ICNS 需包含 PNG 图像。音视频实际解码能力取决于 macOS 支持的编码；压缩包内容暂不支持。
+
+
 
 ## 渲染方式
 

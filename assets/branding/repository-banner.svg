@@ -1,0 +1,33 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1280" height="480" viewBox="0 0 1280 480">
+<title>Glim — The all-purpose viewer for the AI era.</title>
+<desc>Code, documents, data, and Git in one native desktop workspace. macOS and Windows. Free and open source.</desc>
+<defs><linearGradient id="bg" x2="1" y2="1"><stop stop-color="#f5faf9"/><stop offset="1" stop-color="#e8f0f4"/></linearGradient></defs>
+<rect width="1280" height="480" rx="24" fill="url(#bg)"/>
+<circle cx="1150" cy="20" r="290" fill="#d4ece7" opacity=".45"/>
+<circle cx="1250" cy="430" r="220" fill="#d9e4ef" opacity=".5"/>
+<g fill="none" transform="translate(76 63) scale(.112)"><defs>
+    <linearGradient id="surface" x1="160" y1="100" x2="850" y2="940" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#FFFFFF"/>
+      <stop offset="1" stop-color="#E9F0F2"/>
+    </linearGradient>
+    <linearGradient id="iris" x1="441" y1="432" x2="582" y2="592" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#7CE0C9"/>
+      <stop offset="1" stop-color="#29A89F"/>
+    </linearGradient>
+  </defs>
+  <rect x="32" y="32" width="960" height="960" rx="220" fill="url(#surface)"/>
+  <rect x="33" y="33" width="958" height="958" rx="219" stroke="#C7D4D9" stroke-opacity=".65" stroke-width="2"/>
+  <path d="M388 338 214 512 388 686" stroke="#263D48" stroke-width="46" stroke-linecap="round" stroke-linejoin="round"/>
+  <path d="M636 338 810 512 636 686" stroke="#263D48" stroke-width="46" stroke-linecap="round" stroke-linejoin="round"/>
+  <circle cx="512" cy="512" r="98" fill="url(#iris)"/>
+  <circle cx="512" cy="512" r="40" fill="#152333"/>
+  <circle cx="542" cy="478" r="15" fill="#F1FFFA"/>
+</g>
+<g font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Arial, sans-serif" fill="#233c48">
+<text x="214" y="145" font-size="72" font-weight="700" letter-spacing="-3">Glim</text>
+<text x="82" y="240" font-size="43" font-weight="600" letter-spacing="-1">The all-purpose viewer for the AI era.</text>
+<text x="84" y="290" font-size="23" fill="#56717a">Code. Documents. Data. Git. One native workspace.</text>
+<g font-size="17" font-weight="600">
+<rect x="84" y="345" width="194" height="44" rx="22" fill="#fff"/><text x="108" y="373">macOS + Windows</text>
+<rect x="292" y="345" width="210" height="44" rx="22" fill="#fff"/><text x="315" y="373">Free + open source</text>
+</g></g></svg>

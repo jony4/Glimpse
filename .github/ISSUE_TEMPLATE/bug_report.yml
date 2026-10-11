@@ -1,0 +1,49 @@
+name: Bug report / 问题反馈
+description: Something does not open, render, or behave correctly.
+title: "[Bug]: "
+body:
+  - type: markdown
+    attributes:
+      value: "English / 中文均可。Please remove private paths, credentials, and document content from attachments."
+  - type: input
+    id: version
+    attributes:
+      label: Glim version / 版本
+      placeholder: "0.1.8"
+    validations:
+      required: true
+  - type: dropdown
+    id: platform
+    attributes:
+      label: Platform / 平台
+      options:
+        - macOS Apple Silicon
+        - macOS Intel
+        - Windows x64
+        - Other / source build
+    validations:
+      required: true
+  - type: input
+    id: os
+    attributes:
+      label: OS version / 系统版本
+    validations:
+      required: true
+  - type: textarea
+    id: reproduce
+    attributes:
+      label: Steps and actual behavior / 复现步骤与实际表现
+      description: Include the file extension and approximate size when relevant.
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected behavior / 期望表现
+    validations:
+      required: true
+  - type: textarea
+    id: evidence
+    attributes:
+      label: Sanitized sample, screenshot, or logs / 脱敏样例、截图或日志
+      description: Attach a minimal public or synthetic sample if possible. Include assistive technology details for accessibility issues.

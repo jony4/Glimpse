@@ -1,0 +1,28 @@
+name: Feature or format request / 功能与格式建议
+description: Suggest a reading experience or a file format to support.
+title: "[Request]: "
+body:
+  - type: textarea
+    id: need
+    attributes:
+      label: What do you want to do? / 想解决什么问题？
+      description: Describe the task and why the current experience falls short. English or Chinese is welcome.
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Desired experience / 期望的体验
+      description: For a format, explain which information or preview matters most.
+    validations:
+      required: true
+  - type: input
+    id: platform
+    attributes:
+      label: Platform / 平台
+      placeholder: macOS / Windows / both
+  - type: textarea
+    id: sample
+    attributes:
+      label: Format specification or sanitized example / 格式说明或脱敏样例
+      description: Link public documentation or attach a small synthetic file. Do not upload confidential data.
