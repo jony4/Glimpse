@@ -120,7 +120,9 @@ pub fn inspect(directory: &Path) -> Result<Option<Repository>> {
         }
         bail!("{}", output.stderr.trim());
     }
-    let root = path_from_bytes(output.bytes.strip_suffix(b"\n").unwrap_or(&output.bytes));
+    let root = path_from_bytes(output.bytes.strip_suffix(b"\n").unwrap_or(&output.bytes))
+        .canonicalize()
+        .context("Cannot resolve repository root")?;
     let branch = checked(&root, &["symbolic-ref", "--quiet", "--short", "HEAD"])
         .or_else(|_| checked(&root, &["rev-parse", "--short", "HEAD"]))?;
     let status = checked(
