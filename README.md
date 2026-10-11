@@ -14,6 +14,7 @@ AI 时代的全能查看器。原生 macOS 应用，在一个轻巧的窗口里�
 | --- | --- |
 | 编程语言 | Rust、C / C++、Go、Swift、Java、C#、Kotlin、Zig、Python、Ruby、PHP、Lua、Scala、Elixir、Shell |
 | Web 与模板 | JavaScript / JSX、TypeScript / TSX、HTML、CSS、Astro、Svelte、ERB、EJS、Jinja / Jinja2、Nunjucks、Twig；Vue 复用 HTML 高亮 |
+| SQLite | DB / SQLite / SQLite3、WAL / SHM 关联文件；表结构、定义 SQL、分页记录与二进制摘要，只读快照 |
 | 数据与接口 | JSON / JSONC / JSONL、GeoJSON、TOML、YAML、SQL、GraphQL、Protobuf；Notebook 查看 JSON 源码 |
 | 配置与构建 | Dockerfile、Containerfile、Makefile、CMake、Nix、INI、`.env`、`.npmrc`、`.editorconfig`、`.gitignore`、Gemfile 等 |
 | 文档与文本 | HTML / Markdown 排版预览（HTML 为静态阅读，不执行脚本）；TXT、日志、CSV 和其他 UTF-8 文件按文本查看 |

@@ -75,6 +75,21 @@ pub fn snapshot(root: &Path) -> Result<GitSnapshot> {
         }
     }
     result.merging = optional(root, &["rev-parse", "--verify", "MERGE_HEAD"])?.is_some();
+    // Graph depends on refs (including tags/stashes), not worktree modifications.
+    use std::hash::{Hash, Hasher};
+    let refs = checked(
+        root,
+        &[
+            "for-each-ref",
+            "--sort=refname",
+            "--format=%(refname)%00%(objectname)",
+        ],
+    )?;
+    let mut hash = std::collections::hash_map::DefaultHasher::new();
+    refs.hash(&mut hash);
+    result.head.hash(&mut hash);
+    result.branch.hash(&mut hash);
+    result.graph_revision = hash.finish();
     Ok(result)
 }
 fn branch_name(root: &Path, name: &str) -> Result<()> {

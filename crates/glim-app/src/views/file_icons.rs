@@ -41,7 +41,8 @@ pub fn file_icon(path: &Path) -> impl IntoElement {
             "zip" | "gz" | "tar" | "7z" => "zip",
             "mp3" | "wav" | "flac" => "audio",
             "mp4" | "mov" | "mkv" => "video",
-            "sql" | "db" | "sqlite" => "database",
+            "sql" | "db" | "db3" | "sqlite" | "sqlite3" | "s3db" | "wal" | "shm" | "db-wal"
+            | "sqlite-wal" | "sqlite3-wal" | "db-shm" | "sqlite-shm" | "sqlite3-shm" => "database",
             "xml" | "plist" | "mtlx" | "tmx" => "xml",
             "vue" => "vue",
             "svelte" => "svelte",

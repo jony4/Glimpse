@@ -168,6 +168,41 @@ impl Workspace {
         cx.notify();
     }
 
+    fn set_diff_mode(&mut self, side_by_side: bool, cx: &mut Context<Self>) {
+        let Some(index) = self.active else {
+            return;
+        };
+        if side_by_side && !self.tabs[index].split_available() {
+            return;
+        }
+        self.tabs[index].set_side_by_side(side_by_side);
+        let prefs = cx.global_mut::<crate::app::ReaderPreferences>();
+        prefs.diff_side_by_side = Some(side_by_side);
+        let previous = prefs.preview_save_task.take();
+        let task = cx.spawn(async move |view, cx| {
+            if let Some(previous) = previous {
+                previous.await;
+            }
+            let result = cx
+                .background_executor()
+                .spawn(async move { glim_services::preferences::save_diff_mode(side_by_side) })
+                .await;
+            if let Err(error) = result {
+                let _ = view.update(cx, |v, cx| {
+                    v.error = Some(format!("Cannot remember diff mode: {error:#}").into());
+                    cx.notify();
+                });
+            }
+        });
+        cx.global_mut::<crate::app::ReaderPreferences>()
+            .preview_save_task = Some(task);
+        for reader in &mut self.tabs {
+            reader.set_side_by_side(side_by_side);
+        }
+        cx.refresh_windows();
+        cx.notify();
+    }
+
     fn reader_controls(&self, cx: &mut Context<Self>) -> AnyElement {
         let subtle = ButtonCustomVariant::new(cx)
             .hover(cx.theme().foreground.opacity(0.04))
@@ -227,10 +262,7 @@ impl Workspace {
                             .selected(split)
                             .disabled(!available)
                             .on_click(cx.listener(|v, _, _, cx| {
-                                if let Some(i) = v.active {
-                                    v.tabs[i].set_side_by_side(true);
-                                }
-                                cx.notify();
+                                v.set_diff_mode(true, cx);
                             })),
                     )
                     .child(
@@ -242,10 +274,7 @@ impl Workspace {
                             .accessibility_label("Inline")
                             .selected(!split)
                             .on_click(cx.listener(|v, _, _, cx| {
-                                if let Some(i) = v.active {
-                                    v.tabs[i].set_side_by_side(false);
-                                }
-                                cx.notify();
+                                v.set_diff_mode(false, cx);
                             })),
                     )
                 },

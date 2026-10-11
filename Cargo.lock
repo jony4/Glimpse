@@ -2153,7 +2153,7 @@ dependencies = [
 
 [[package]]
 name = "glim-app"
-version = "0.1.6"
+version = "0.1.7"
 dependencies = [
  "anyhow",
  "glim-core",
@@ -2165,11 +2165,11 @@ dependencies = [
 
 [[package]]
 name = "glim-core"
-version = "0.1.6"
+version = "0.1.7"
 
 [[package]]
 name = "glim-services"
-version = "0.1.6"
+version = "0.1.7"
 dependencies = [
  "anyhow",
  "glim-core",

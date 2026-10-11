@@ -24,7 +24,11 @@ impl DiffReader {
             .map(|patch| cx.new(|cx| crate::views::split_diff::SplitDiff::new(patch, window, cx)));
         Self {
             source,
-            side_by_side: split.is_some(),
+            side_by_side: split.is_some()
+                && cx
+                    .try_global::<crate::app::ReaderPreferences>()
+                    .and_then(|p| p.diff_side_by_side)
+                    .unwrap_or(true),
             split,
         }
     }

@@ -7,32 +7,7 @@ import UniformTypeIdentifiers
 import CoreServices
 import CoreText
 
-func installPreviewIcon() {
-    guard let url = Bundle.main.url(forResource: "Glim", withExtension: "icns"),
-          let base = NSImage(contentsOf: url) else { return }
-    guard Bundle.main.bundleIdentifier == "io.github.jony4.glim.preview" else {
-        NSApp.applicationIconImage = base
-        return
-    }
-    let icon = NSImage(size: NSSize(width: 512, height: 512))
-    icon.lockFocus()
-    base.draw(in: NSRect(x: 0, y: 0, width: 512, height: 512))
-    let badge = NSBezierPath(ovalIn: NSRect(x: 366, y: 32, width: 106, height: 106))
-    NSColor(calibratedRed: 0.65, green: 0.91, blue: 0.85, alpha: 1).setFill()
-    badge.fill()
-    NSColor(calibratedWhite: 0.95, alpha: 0.9).setStroke()
-    badge.lineWidth = 5; badge.stroke()
-    let ink = NSColor(calibratedRed: 0.08, green: 0.17, blue: 0.22, alpha: 1)
-    ink.setStroke()
-    let eye = NSBezierPath(ovalIn: NSRect(x: 388, y: 66, width: 62, height: 38))
-    eye.lineWidth = 5; eye.stroke()
-    ink.setFill()
-    NSBezierPath(ovalIn: NSRect(x: 411, y: 77, width: 16, height: 16)).fill()
-    icon.unlockFocus()
-    NSApp.applicationIconImage = icon
-}
-
-struct Playlist: Decodable { let files: [String]; let shuffle: Bool; let office: Bool?; let associations: String?; let font: Bool? }
+struct Playlist: Decodable { let files: [String]; let shuffle: Bool; let office: Bool?; let associations: String?; let font: Bool?; let sqlite: String?; let sqliteInfo: String? }
 
 // Default handlers change only after a selection and explicit confirmation.
 final class AssociationWindow: NSObject, NSWindowDelegate {
@@ -48,6 +23,7 @@ final class AssociationWindow: NSObject, NSWindowDelegate {
         ("C / C++", ["c", "h", "cpp", "hpp"]), ("Go / Swift", ["go", "swift"]),
         ("Java / Kotlin", ["java", "kt"]), ("Ruby / PHP", ["rb", "php"]),
         ("Shell / SQL", ["sh", "sql"]), ("CSS", ["css"]),
+        ("SQLite", ["sqlite", "sqlite3", "db", "db3"]),
         ("Fonts", ["ttf", "otf", "ttc", "otc", "dfont"]),
         ("PDF", ["pdf"]), ("Images", ["png", "jpg", "jpeg", "webp", "gif", "svg", "bmp", "tiff"]),
         ("Audio", ["mp3", "m4a", "wav", "aac", "flac", "aiff", "caf"]),
@@ -302,13 +278,13 @@ final class PreviewApp: NSObject, NSApplicationDelegate, NSWindowDelegate, NSTab
     var pdf = false
     var officeView: QLPreviewView?
     var fontPreview: FontPreview?
+    var sqlitePreview: SQLitePreview?
     var failed = Set<URL>()
 
     func button(_ title: String, _ action: Selector) -> NSButton {
         NSButton(title: title, target: self, action: action)
     }
     func applicationDidFinishLaunching(_ notification: Notification) {
-        installPreviewIcon()
         do {
             let data = try Data(contentsOf: URL(fileURLWithPath: CommandLine.arguments[1]))
             let playlist = try JSONDecoder().decode(Playlist.self, from: data)
@@ -327,6 +303,15 @@ final class PreviewApp: NSObject, NSApplicationDelegate, NSWindowDelegate, NSTab
             window.minSize = NSSize(width: 640, height: 420)
             window.delegate = self
             window.isReleasedWhenClosed = false
+            if let info = playlist.sqliteInfo {
+                let preview = SQLitePreview(path: playlist.sqlite, information: info); sqlitePreview = preview
+                preview.view.frame = window.contentView!.bounds
+                preview.view.autoresizingMask = [.width, .height]
+                window.contentView!.addSubview(preview.view)
+                window.title = "\(urls[0].lastPathComponent) — Glim"
+                window.center(); window.makeKeyAndOrderFront(nil); NSApp.activate(ignoringOtherApps: true)
+                return
+            }
             if playlist.font == true {
                 let preview = FontPreview(url: urls[0]); fontPreview = preview
                 preview.view.frame = window.contentView!.bounds

@@ -37,7 +37,7 @@ pub fn is_iwork(path: &Path) -> bool {
 /// `.key` is also used by plain-text cryptographic keys. Only document packages
 /// and ZIP containers should be handed to Keynote's Quick Look provider.
 pub fn can_open(path: &Path) -> bool {
-    if !supports(path) {
+    if !supports(path) && !crate::sqlite::has_header(path) {
         return false;
     }
     if path.is_dir() {
@@ -63,7 +63,8 @@ pub fn can_open(path: &Path) -> bool {
 
 pub fn supports(path: &Path) -> bool {
     cfg!(target_os = "macos")
-        && (is_media(path)
+        && (crate::sqlite::supports(path)
+            || is_media(path)
             || is_font(path)
             || is_office(path)
             || path
@@ -114,8 +115,15 @@ pub fn open(
         .iter()
         .map(|path| path.to_str().context("Native preview requires UTF-8 paths"))
         .collect::<Result<Vec<_>>>()?;
+    let sqlite = if !folder && (crate::sqlite::supports(path) || crate::sqlite::has_header(path)) {
+        Some(crate::sqlite::prepare(path)?)
+    } else {
+        None
+    };
     launch(
-        serde_json::json!({"files": files, "shuffle": shuffle, "office": !folder && is_office(path), "font": !folder && is_font(path)}),
+        serde_json::json!({"files": files, "shuffle": shuffle, "office": !folder && is_office(path), "font": !folder && is_font(path),
+            "sqlite": sqlite.as_ref().and_then(|s| s.database.as_ref()).and_then(|p| p.to_str()),
+            "sqliteInfo": sqlite.as_ref().map(|s| &s.information)}),
         cancelled,
         show,
     )
@@ -165,10 +173,12 @@ fn launch(
         std::fs::create_dir_all(&binaries)?;
         let resources = contents.join("Resources");
         std::fs::create_dir_all(&resources)?;
-        std::fs::write(
-            resources.join("Glim.icns"),
-            include_bytes!("../../../assets/macos/Glim.icns"),
-        )?;
+        let icon: &[u8] = if settings {
+            include_bytes!("../../../assets/macos/Glim.icns")
+        } else {
+            include_bytes!("../../../assets/macos/GlimPreview.icns")
+        };
+        std::fs::write(resources.join("Glim.icns"), icon)?;
         let info = r#"<?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0"><dict>

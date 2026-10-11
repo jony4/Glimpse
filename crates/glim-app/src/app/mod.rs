@@ -15,6 +15,7 @@ pub struct ReaderPreferences {
     pub word_wrap: bool,
     pub html_preview: bool,
     pub markdown_preview: bool,
+    pub diff_side_by_side: Option<bool>,
     pub preview_save_task: Option<Task<()>>,
 }
 impl Global for ReaderPreferences {}
@@ -70,6 +71,7 @@ pub fn run() -> Result<()> {
     let word_wrap = glim_services::preferences::word_wrap();
     let html_preview = glim_services::preferences::preview_mode("html");
     let markdown_preview = glim_services::preferences::preview_mode("markdown");
+    let diff_side_by_side = glim_services::preferences::diff_side_by_side();
     let application = gpui_kit::application().with_assets(assets::Assets);
     let context = std::rc::Rc::new(std::cell::RefCell::new(None::<AsyncApp>));
     let pending = std::rc::Rc::new(std::cell::RefCell::new(Vec::<String>::new()));
@@ -94,6 +96,7 @@ pub fn run() -> Result<()> {
             word_wrap,
             html_preview,
             markdown_preview,
+            diff_side_by_side,
             preview_save_task: None,
         });
         cx.set_global(OpenWorkspaces::default());

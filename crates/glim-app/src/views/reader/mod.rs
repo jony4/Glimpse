@@ -145,7 +145,11 @@ impl Reader {
         );
         let split = glim_core::split_diff::split_commit_patch(&text)
             .map(|patch| cx.new(|cx| crate::views::split_diff::SplitDiff::new(patch, window, cx)));
-        let side_by_side = commit_file.is_some() && split.is_some();
+        let side_by_side = split.is_some()
+            && cx
+                .try_global::<crate::app::ReaderPreferences>()
+                .and_then(|p| p.diff_side_by_side)
+                .unwrap_or(commit_file.is_some());
         let root = path.parent().map(ToOwned::to_owned);
         let commit_id = path
             .file_name()

@@ -30,6 +30,7 @@ pub(super) struct GitState {
     pub graph_all: bool,
     pub graph_limit: usize,
     graph_more: bool,
+    graph_refresh_pending: bool,
     pub graph_rows: Vec<GraphRow>,
     expanded_commits: HashSet<String>,
     commit_files: HashMap<String, Vec<management::CommitFile>>,
@@ -60,6 +61,7 @@ impl GitState {
             graph_all: true,
             graph_limit: 200,
             graph_more: false,
+            graph_refresh_pending: false,
             graph_rows: Vec::new(),
             expanded_commits: HashSet::new(),
             commit_files: HashMap::new(),
@@ -98,7 +100,15 @@ impl Changes {
             let _ = view.update(cx, |v, cx| {
                 v.git.snapshot_task = None;
                 match result {
-                    Ok(snapshot) => v.git.snapshot = Some(snapshot),
+                    Ok(snapshot) => {
+                        let history_changed = v.git.snapshot.as_ref().is_none_or(|previous| {
+                            previous.graph_revision != snapshot.graph_revision
+                        });
+                        v.git.snapshot = Some(snapshot);
+                        if history_changed && !v.git.graph_collapsed {
+                            v.reload_graph(cx);
+                        }
+                    }
                     Err(error) => {
                         v.git.snapshot = None;
                         cx.emit(ChangeSelected::Error(format!("Git: {error:#}")));
@@ -107,9 +117,6 @@ impl Changes {
                 cx.notify();
             });
         }));
-        if !self.git.graph_collapsed {
-            self.reload_graph(cx);
-        }
     }
     pub(super) fn reset_git(&mut self, cx: &mut Context<Self>) {
         self.git.snapshot = None;
@@ -123,6 +130,7 @@ impl Changes {
         self.git.graph_task = None;
         self.git.graph_limit = 200;
         self.git.graph_more = false;
+        self.git.graph_refresh_pending = false;
         self.git.graph_scroll = UniformListScrollHandle::new();
         self.reload_git(cx);
     }
@@ -725,10 +733,14 @@ impl Changes {
         controls.into_any_element()
     }
     pub(super) fn reload_graph(&mut self, cx: &mut Context<Self>) {
-        self.git.graph_task = None;
         if self.git.graph_collapsed {
             return;
         }
+        if self.git.graph_task.is_some() {
+            self.git.graph_refresh_pending = true;
+            return;
+        }
+        self.git.graph_refresh_pending = false;
         let Some(root) = self.repository().map(|r| r.root.clone()) else {
             return;
         };
@@ -742,13 +754,22 @@ impl Changes {
             let result = work.await;
             let _ = view.update(cx, |v, cx| {
                 v.git.graph_task = None;
+                if v.git.graph_all != all || v.git.graph_limit != limit {
+                    v.reload_graph(cx);
+                    return;
+                }
                 match result {
                     Ok(rows) => {
                         v.git.graph_more = limit < 1000
                             && rows.iter().filter(|row| row.commit.is_some()).count() >= limit;
-                        v.git.graph_rows = rows;
+                        if v.git.graph_rows != rows {
+                            v.git.graph_rows = rows;
+                        }
                     }
                     Err(e) => cx.emit(ChangeSelected::Error(format!("Graph: {e:#}"))),
+                }
+                if v.git.graph_refresh_pending {
+                    v.reload_graph(cx);
                 }
                 cx.notify();
             });
@@ -881,9 +902,10 @@ impl Changes {
             )
             .when(!self.git.graph_collapsed, |panel| {
                 panel
-                    .when(self.git.graph_task.is_some(), |panel| {
-                        panel.child(div().px_3().text_xs().child("Loading…"))
-                    })
+                    .when(
+                        self.git.graph_task.is_some() && self.git.graph_rows.is_empty(),
+                        |panel| panel.child(div().px_3().text_xs().child("Loading…")),
+                    )
                     .when(
                         self.git.graph_rows.is_empty() && self.git.graph_task.is_none(),
                         |panel| panel.child(div().px_3().text_sm().child("No commits yet.")),

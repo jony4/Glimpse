@@ -1,5 +1,6 @@
 //! Bounded image decoding, kept off the UI executor.
 use anyhow::{Context, Result, ensure};
+use image::ImageDecoder;
 use std::{
     io::{Cursor, Read},
     path::{Path, PathBuf},
@@ -79,11 +80,19 @@ pub fn read_image(path: &Path) -> Result<ImageDocument> {
         limits.max_image_height = Some(8192);
         limits.max_alloc = Some(128 * 1024 * 1024);
         reader.limits(limits);
-        let decoded = reader.decode()?;
+        let decoder = reader.into_decoder()?;
+        let (width, height) = decoder.dimensions();
+        // Check before allocating the full pixel buffer. Compressed file size
+        // alone is not a reliable indication of an image's memory requirements.
         ensure!(
-            u64::from(decoded.width()) * u64::from(decoded.height()) <= 16_000_000,
-            "Image exceeds 16 megapixels"
+            u64::from(width) * u64::from(height) <= 32_000_000,
+            "Image exceeds 32 megapixels"
         );
+        ensure!(
+            decoder.total_bytes() <= 128 * 1024 * 1024,
+            "Decoded image exceeds 128 MiB"
+        );
+        let decoded = image::DynamicImage::from_decoder(decoder)?;
         let mut out = Cursor::new(Vec::new());
         // Float EXR/HDR pixels must be converted before PNG encoding. This is an
         // SDR preview, not a color-managed HDR mastering surface.

@@ -18,6 +18,7 @@ pub struct GitSnapshot {
     pub remotes: Vec<String>,
     pub stashes: Vec<(String, String)>,
     pub merging: bool,
+    pub graph_revision: u64,
 }
 #[derive(Clone, Debug)]
 pub enum GitOperation {
@@ -110,7 +111,7 @@ pub struct GitRequest {
     pub expected_head: Option<String>,
     pub expected_branch: Option<String>,
 }
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct GraphRow {
     pub parents: Vec<String>,
     pub layout: GraphLayout,
@@ -122,7 +123,7 @@ pub struct GraphRow {
     pub subject: String,
 }
 
-#[derive(Clone, Debug, Default)]
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct GraphLayout {
     pub node: usize,
     pub color: usize,

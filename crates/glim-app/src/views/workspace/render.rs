@@ -18,6 +18,14 @@ use gpui_kit::{
 
 impl Render for Workspace {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        if let Some(mode) = cx
+            .try_global::<crate::app::ReaderPreferences>()
+            .and_then(|p| p.diff_side_by_side)
+        {
+            for reader in &mut self.tabs {
+                reader.set_side_by_side(mode);
+            }
+        }
         let path = self.active_reader().map(|r| {
             r.path
                 .strip_prefix(self.root.as_deref().unwrap_or(std::path::Path::new("")))

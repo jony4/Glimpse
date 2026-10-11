@@ -9,5 +9,6 @@ pub mod paged;
 pub mod preferences;
 pub mod preview;
 pub mod safetensors;
+pub mod sqlite;
 pub mod watch;
 pub mod workspace;
