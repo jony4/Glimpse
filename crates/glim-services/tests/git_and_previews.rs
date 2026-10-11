@@ -4,15 +4,13 @@ use glim_services::{git::management, paged, safetensors};
 use std::{fs, path::Path, process::Command};
 
 fn git(root: &Path, args: &[&str]) -> Result<String> {
+    let configuration = tempfile::NamedTempFile::new()?;
     let output = Command::new("git")
         .arg("-C")
         .arg(root)
         .args(args)
         .env("GIT_CONFIG_NOSYSTEM", "1")
-        .env(
-            "GIT_CONFIG_GLOBAL",
-            if cfg!(windows) { "NUL" } else { "/dev/null" },
-        )
+        .env("GIT_CONFIG_GLOBAL", configuration.path())
         .output()?;
     ensure!(
         output.status.success(),

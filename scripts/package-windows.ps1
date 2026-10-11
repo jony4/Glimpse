@@ -7,6 +7,8 @@ $version = ($metadata.packages | Where-Object name -eq 'glim-app').version
 $stage = Join-Path $PWD 'dist/windows-x64/Glim'
 New-Item -ItemType Directory -Force $stage | Out-Null
 Copy-Item (Join-Path $metadata.target_directory 'x86_64-pc-windows-msvc/release/glim.exe') (Join-Path $stage 'Glim.exe') -Force
+$smoke = Start-Process -FilePath (Join-Path $stage 'Glim.exe') -ArgumentList '--help' -Wait -PassThru -RedirectStandardOutput (Join-Path $PWD 'dist/windows-help.txt') -RedirectStandardError (Join-Path $PWD 'dist/windows-help-error.txt')
+if ($smoke.ExitCode -ne 0) { throw "Packaged executable startup failed: $($smoke.ExitCode)" }
 Copy-Item LICENSE (Join-Path $stage 'LICENSE.txt') -Force
 @"
 Glim $version - Windows x64
